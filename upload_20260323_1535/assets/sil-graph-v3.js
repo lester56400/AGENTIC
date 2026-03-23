@@ -44,10 +44,57 @@ jQuery(document).ready(function ($) {
     $('#sil-zoom-out').on('click', function(e) { e.preventDefault(); if (cy) cy.zoom(cy.zoom() / 1.2); });
     $('#sil-close-sidebar').on('click', function() { $('#sil-graph-sidebar').hide(); });
 
+    // --- EXPORT FUNCTIONS ---
+    $('#sil-export-png').on('click', function (e) {
+        e.preventDefault();
+        if (!cy) return;
+        
+        const b64 = cy.png({
+            full: true,
+            bg: 'white',
+            scale: 2
+        });
+
+        const link = document.createElement('a');
+        link.href = b64;
+        link.download = 'sil-cartographie.png';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    });
+
+    $('#sil-export-json').on('click', function (e) {
+        e.preventDefault();
+        if (!cy) return;
+
+        // "Audit AI" Format with Metadata
+        const graphData = {
+            metadata: {
+                site_url: window.location.hostname,
+                export_date: new Date().toISOString(),
+                node_count: cy.nodes('[^is_silo_parent]').length,
+                edge_count: cy.edges().length,
+                sil_version: "2.0",
+                features: ["sil_pagerank", "permeability", "semantic_collision"]
+            },
+            elements: cy.elements().map(el => el.data())
+        };
+
+        const blob = new Blob([JSON.stringify(graphData, null, 2)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.href = url;
+        downloadAnchorNode.download = "sil-audit-data.json";
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        document.body.removeChild(downloadAnchorNode);
+        URL.revokeObjectURL(url);
+    });
+
     function updateStatus(percent, label, detail) {
         $('#sil-progress-bar').css('width', percent + '%');
         $('#sil-step-label').text(label);
-        $('#sil-step-detail').text(detail);
+        $('#sil-graph-status-text').text(detail); // Match the ID in renderer
     }
 
     function loadGraphData() {
@@ -65,10 +112,30 @@ jQuery(document).ready(function ($) {
             } else {
                 handleGraphError(response.data);
             }
-        }).fail(() => handleGraphError('Le serveur met trop de temps \u00e0 r\u00e9pondre.'));
+        }).fail((jqXHR, textStatus, errorThrown) => {
+            let msg = 'Erreur serveur : ' + errorThrown;
+            if (jqXHR.status === 504 || jqXHR.status === 503 || textStatus === 'timeout') {
+                msg = 'Le serveur met trop de temps à répondre (Timeout).';
+            } else if (jqXHR.status === 500) {
+                msg = 'Erreur interne du serveur (500). Regardez les logs PHP ou l\'onglet Réseau de votre navigateur pour plus de détails.';
+            }
+            if (jqXHR.responseJSON && jqXHR.responseJSON.data) {
+                msg += ' - Détail: ' + jqXHR.responseJSON.data;
+            } else if (jqXHR.responseText) {
+                try {
+                    let json = JSON.parse(jqXHR.responseText);
+                    if (json.data) msg += ' - Détail: ' + json.data;
+                } catch(e) {}
+            }
+            handleGraphError(msg);
+        });
     }
 
     function processGraphData(data) {
+        if (data && data.metadata && data.metadata.generated_at) {
+            $('#sil-last-update-hint').text('(Analysé le ' + data.metadata.generated_at + ')');
+        }
+
         try {
             let maxImp = 1;
             let maxWeight = 1;
@@ -100,6 +167,7 @@ jQuery(document).ready(function ($) {
                 });
             }
 
+            let maxPagerank = 0;
             if (data && data.nodes) {
                 data.nodes.forEach(node => {
                     if (!node.data || node.data.is_silo_parent === 'true' || node.data.is_silo_parent === true) return;
@@ -119,9 +187,11 @@ jQuery(document).ready(function ($) {
                         node.data.label = '\ud83e\uddfb ' + node.data.label;
                     }
 
-                    let imp = parseInt(node.data.gsc_impressions || 0);
-                    node.data.gsc_impressions = imp; // Must be Number for Cytoscape's mapData
-                    if (imp > maxImp) maxImp = imp;
+                    // Numeric casting for mapData
+                    node.data.gsc_impressions = parseInt(node.data.gsc_impressions || 0);
+                    node.data.sil_pagerank = parseFloat(node.data.sil_pagerank || 0);
+                    
+                    if (node.data.sil_pagerank > maxPagerank) maxPagerank = node.data.sil_pagerank;
                 });
             }
 
@@ -129,95 +199,140 @@ jQuery(document).ready(function ($) {
                 data.edges.forEach(e => { if (e.data.weight > maxWeight) maxWeight = e.data.weight; });
             }
 
-            renderCytoscape(data, maxImp, maxWeight, siloLabels);
+            renderCytoscape(data, maxPagerank, maxWeight, siloLabels);
         } catch (e) {
             console.error(e);
             handleGraphError("Erreur de traitement des donnees locales : " + e.message);
         }
     }
 
-    function renderCytoscape(data, maxImp, maxWeight, siloLabels) {
-        // Init Cytoscape sans le layout initial pour éviter le blocage
-        cy = cytoscape({
-            container: $container[0],
-            elements: data,
-            style: [
-                {
-                    selector: 'node[^is_silo_parent]',
-                    style: {
-                        'label': 'data(label)',
-                        'width': `mapData(gsc_impressions, 0, ${maxImp > 1 ? maxImp : 10}, 40, 90)`,
-                        'height': `mapData(gsc_impressions, 0, ${maxImp > 1 ? maxImp : 10}, 40, 90)`,
-                        'background-color': n => getColorForCluster(n.data('cluster_id')),
-                        'color': '#1e293b',
-                        'font-size': '11px',
-                        'font-weight': 'bold',
-                        'text-valign': 'bottom',
-                        'text-margin-y': '6px',
-                        'border-width': 2,
-                        'border-color': '#fff'
+    function renderCytoscape(data, maxPagerank, maxWeight, siloLabels) {
+        try {
+            // Init Cytoscape
+            cy = cytoscape({
+                container: $container[0],
+                elements: data,
+                style: [
+                    {
+                        selector: 'node[^is_silo_parent]',
+                        style: {
+                            'label': 'data(label)',
+                            'width': `mapData(sil_pagerank, 0, ${maxPagerank > 0 ? maxPagerank : 1}, 70, 180)`,
+                            'height': `mapData(sil_pagerank, 0, ${maxPagerank > 0 ? maxPagerank : 1}, 70, 180)`,
+                            'background-color': n => getColorForCluster(n.data('cluster_id')),
+                            'color': '#0f172a',
+                            'font-size': '18px',
+                            'font-weight': 'bold',
+                            'min-zoomed-font-size': 10,
+                            'text-valign': 'bottom',
+                            'text-margin-y': '8px',
+                            'text-background-color': '#ffffff',
+                            'text-background-opacity': 0.85,
+                            'text-background-padding': '4px',
+                            'text-background-shape': 'roundrectangle',
+                            'border-width': 2,
+                            'border-color': '#ffffff'
+                        }
+                    },
+                    {
+                        selector: 'node[is_silo_parent = "true"]',
+                        style: {
+                            'label': 'data(label)',
+                            'shape': 'roundrectangle',
+                            'background-opacity': 0.15,
+                            'background-color': n => getColorForCluster(n.data('cluster_id')),
+                            'border-width': 2,
+                            'border-style': 'dashed',
+                            'border-color': '#94a3b8',
+                            'text-valign': 'top',
+                            'text-halign': 'center',
+                            'font-size': '26px',
+                            'font-weight': 'bold',
+                            'color': '#475569',
+                            'text-opacity': 0.6,
+                            'text-transform': 'none'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': `mapData(weight, 0, ${maxWeight > 0 ? maxWeight : 10}, 2, 8)`,
+                            'line-color': '#94a3b8',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier',
+                            'opacity': 0.6
+                        }
+                    },
+                    {
+                        selector: '.dimmed',
+                        style: { 
+                            'opacity': 0.1, 
+                            'text-opacity': 0 
+                        }
+                    },
+                    { selector: ':selected', style: { 'border-width': 3, 'border-color': '#2563eb' } },
+                    {
+                        selector: 'node[is_orphan="true"]',
+                        style: { 'border-width': 5, 'border-color': '#ef4444', 'border-style': 'solid' }
+                    },
+                    {
+                        selector: 'node[is_intruder="true"]',
+                        style: { 'border-width': 5, 'border-color': '#8b5cf6', 'border-style': 'dashed' }
+                    },
+                    {
+                        selector: 'node[is_siphon="true"]',
+                        style: { 'border-width': 5, 'border-color': '#f97316', 'border-style': 'double' }
+                    },
+                    {
+                        selector: 'node[is_bridge="true"]',
+                        style: { 'border-width': 6, 'border-color': '#eab308', 'border-style': 'double', 'shape': 'hexagon' }
+                    },
+                    {
+                        selector: 'node[is_missing_reciprocity="true"][^is_silo_parent]',
+                        style: { 
+                            'border-width': 6, 
+                            'border-color': '#f97316', 
+                            'border-style': 'dashed'
+                        }
+                    },
+                    {
+                        selector: 'node[is_strategic="true"][!is_silo_parent]',
+                        style: { 
+                            'border-width': 8, 
+                            'border-color': '#eab308', 
+                            'border-style': 'solid'
+                        }
                     }
-                },
-                {
-                    selector: 'node[is_silo_parent]',
-                    style: {
-                        'label': 'data(label)',
-                        'shape': 'roundrectangle',
-                        'background-opacity': 0.08,
-                        'background-color': n => getColorForCluster(n.data('cluster_id')),
-                        'border-width': 1,
-                        'border-style': 'dashed',
-                        'border-color': '#94a3b8',
-                        'text-valign': 'top',
-                        'text-halign': 'center',
-                        'font-size': '18px',
-                        'text-opacity': 0.5
-                    }
-                },
-                {
-                    selector: 'edge',
-                    style: {
-                        'width': n => {
-                            const w = parseFloat(n.data('weight') || 1);
-                            if (maxWeight <= 1) return 2;
-                            return 1.5 + (w / maxWeight) * 4.5;
-                        },
-                        'line-color': '#cbd5e1',
-                        'target-arrow-shape': 'triangle',
-                        'curve-style': 'bezier',
-                        'opacity': 0.55
-                    }
-                },
-                { selector: '.dimmed', style: { 'opacity': 0.07, 'text-opacity': 0 } },
-                { selector: ':selected', style: { 'border-width': 3, 'border-color': '#2563eb' } },
-                {
-                    selector: 'node[is_orphan="true"], node[is_orphan=true]',
-                    style: { 'border-width': 5, 'border-color': '#ef4444', 'border-style': 'solid' }
-                },
-                {
-                    selector: 'node[is_intruder="true"], node[is_intruder=true]',
-                    style: { 'border-width': 5, 'border-color': '#8b5cf6', 'border-style': 'dashed' }
-                },
-                {
-                    selector: 'node[is_siphon="true"], node[is_siphon=true]',
-                    style: { 'border-width': 5, 'border-color': '#f97316', 'border-style': 'double' }
-                },
-                {
-                    selector: 'node[is_bridge="true"], node[is_bridge=true]',
-                    style: { 'border-width': 6, 'border-color': '#eab308', 'border-style': 'double', 'shape': 'hexagon' }
-                }
-
-            ]
-        });
+                ]
+            });
+        } catch (err) {
+            console.error("Cytoscape Init Error:", err);
+            handleGraphError("Erreur d'initialisation du graphe : " + err.message + ". Essayez de vider le cache du navigateur.");
+            return;
+        }
 
         // Executer le layout de maniere controle et explicite
         const layout = cy.layout({
             name: 'cose',
-            nodeRepulsion: 15000,
-            idealEdgeLength: 100,
-            gravity: 2.0,
-            gravityRange: 3.8,
+            nodeDimensionsIncludeLabels: false, // Vital pour éviter le chevauchement des textes
+            idealEdgeLength: 150,      // Plus d'espace pour la clarté
+            nodeOverlap: 40,
+            refresh: 20,
+            fit: true,
             padding: 50,
+            randomize: false,
+            componentSpacing: parseInt(silGraphData.spacing) || 120,      // Plus d'écart entre silos        
+            nodeRepulsion: function( node ){ 
+                let baseRepulsion = parseInt(silGraphData.repulsion) || 8000; // Réduit drastiquement
+                return baseRepulsion + (node.width() * 50); 
+            }, 
+            gravity: parseFloat(silGraphData.gravity) || 1.5,                      
+            edgeElasticity: function( edge ){ return 100; },
+            nestingFactor: 1.2,
+            numIter: 1000,
+            initialTemp: 200,
+            coolingFactor: 0.95,
+            minTemp: 1.0,
             animate: false
         });
         
@@ -321,6 +436,10 @@ jQuery(document).ready(function ($) {
                 const isSiphon   = node.data('is_siphon') === 'true' || node.data('is_siphon') === true;
                 const isIntruder = d.is_intruder || node.data('is_intruder') === 'true' || node.data('is_intruder') === true;
                 const isPivot     = node.data('is_pivot') === 'true' || node.data('is_pivot') === true;
+                const isStrategic = node.data('is_strategic') === 'true' || node.data('is_strategic') === true;
+                const hasReciprocity = node.data('has_reciprocal_link') === 'true' || node.data('has_reciprocal_link') === true;
+                const cornerstoneId = node.data('cornerstone_id');
+
                 const nodeLabel  = node.data('label') || 'Sans titre';
                 const permeability = parseInt(node.data('cluster_permeability') || 0);
                 const semanticTarget = node.data('semantic_target') || 'autre silo';
@@ -328,44 +447,68 @@ jQuery(document).ready(function ($) {
                 let html = '<div style="border-top:4px solid ' + color + ';padding-top:12px;">';
                 
                 // Alert Badges
-                if (isPivot) {
-                    html += '<div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;">\ud83d\udc8e <strong style="color:#059669;">Pivot S\u00e9mantique</strong> \u2014 Article le plus repr\u00e9sentatif de son silo.</div>';
+                if (isStrategic) {
+                    html += '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;display:flex;align-items:center;gap:8px;">' + silGraphData.icons.star + ' <strong style="color:#b45309;">Pilier de Silo (Cornerstone)</strong> — Page d\'autorité principale.</div>';
                 }
 
                 if (isOrphan) {
-                    html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;">\ud83d\udea9 <strong style="color:#b91c1c;">Page Orpheline</strong> \u2014 Aucun lien interne entrant.</div>';
-                } else if (isSiphon) {
-                    html += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;">\ud83e\uddfb <strong style="color:#c2410c;">Page Siphon</strong> \u2014 Exporte du PageRank sans en recevoir.</div>';
+                    html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;display:flex;align-items:center;gap:8px;">' + silGraphData.icons.flag + ' <strong style="color:#b91c1c;">Page Orpheline</strong> — Aucun lien interne entrant.</div>';
+                }
+                
+                // Reciprocity Module (Silo Sealing)
+                else if (!isStrategic && !hasReciprocity && cornerstoneId && String(clusterId) !== '0') {
+                    html += `<div class="sil-reciprocity-block">
+                        <h5>${silGraphData.icons.anchor || '🔗'} Maillage Réciproque Manquant</h5>
+                        <p>Cet article appartient au <strong>${siloLabel}</strong> mais ne renvoie pas de lien vers son Pilier. Cela affaiblit la structure du silo.</p>
+                        <button class="button sil-seal-btn" data-source="${postId}" data-target="${cornerstoneId}">
+                            🚀 Sceller le Silo (Lien vers Pilier)
+                        </button>
+                    </div>`;
+                }
+ else if (isSiphon) {
+                    html += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;display:flex;align-items:center;gap:8px;">' + silGraphData.icons.droplets + ' <strong style="color:#c2410c;">Page Siphon</strong> — Capte le PageRank sans le redistribuer (Cul-de-sac).</div>';
                 } else if (isIntruder) {
-                    const proxPercent = Math.round((d.proximity || 0) * 100);
-                    const isSemanticIntruder = (d.proximity !== undefined && d.proximity < 0.4);
-                    const intruderEmoji = isSemanticIntruder ? '👾' : '🗺️';
-                    const intruderTitle = isSemanticIntruder ? 'Intrus Sémantique Identifié' : 'Déséquilibre de Maillage (Parasite)';
+                    const proximity = (d.proximity || 0);
+                    const proxPercent = Math.round(proximity * 100);
+                    
+                    // On distingue l'intrus sémantique (mauvais sujet) du parasite (mauvais maillage)
+                    const isPureSemanticIntruder = proximity < 0.6;
+                    const intruderIcon = isPureSemanticIntruder ? silGraphData.icons.ghost : silGraphData.icons.target;
+                    const intruderTitle = isPureSemanticIntruder ? 'Intrus Sémantique Identifié' : 'Déséquilibre de Maillage (Parasite)';
                     
                     html += '<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:12px;margin-bottom:15px;font-size:12px;">';
                     html += '<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">';
-                    html += `<span style="font-size:18px;">${intruderEmoji}</span> <strong style="color:#6d28d9;">${intruderTitle}</strong>`;
+                    html += `${intruderIcon} <strong style="color:#6d28d9;">${intruderTitle}</strong>`;
                     html += '</div>';
                     
-                    if (isSemanticIntruder) {
-                        html += '<p style="margin:0 0 10px 0; color:#4338ca;">Ce contenu a un score de coh\u00e9sion de seulement <strong>' + proxPercent + '%</strong> avec son silo actuel.</p>';
+                    if (isPureSemanticIntruder) {
+                        html += '<p style="margin:0 0 10px 0; color:#4338ca;">Ce contenu n\'est pas \u00e0 sa place. Sa coh\u00e9sion th\u00e9matique avec ce silo est de seulement <strong>' + proxPercent + '%</strong>.</p>';
+                        
+                        if (d.recommended_silo_name && d.closest_content_title) {
+                            html += '<div style="margin-top:8px; padding-top:8px; border-top:1px solid #ddd6fe;">';
+                            html += '<div style="display:flex; align-items:flex-start; gap:8px; color:#1e293b; line-height:1.4;">' + silGraphData.icons.lightbulb + ' <span><strong>Conseil IA :</strong> Déplacez cet article vers le silo <strong>' + d.recommended_silo_name + '</strong> (proche de <em>"' + d.closest_content_title + '"</em>).</span></div>';
+                            html += '<div style="margin-top:12px; text-align:center;">';
+                            html += '<button class="button button-primary sil-reco-bridge-btn" data-source="' + postId + '" data-target="' + d.closest_content_id + '" data-title="' + d.closest_content_title.replace(/"/g,'&quot;') + '" style="font-size:11px; padding:6px 16px; height:auto; line-height:1.4; border-radius:20px; display:inline-flex; align-items:center; gap:8px;">' + silGraphData.icons.bridge + ' Créer un Pont Sémantique Direct</button>';
+                            html += '</div></div>';
+                        }
                     } else {
-                        html += '<p style="margin:0 0 10px 0; color:#4338ca;">Cet article est parfaitement dans le th\u00e8me (<strong>' + proxPercent + '%</strong>) mais ne pointe vers aucun article de son silo.</p>';
-                        html += '<p style="margin:0 0 10px 0; font-size:11px; color:#6366f1;">Il se comporte comme un "Silonaute" : il profite du jus du silo sans le rediffuser.</p>';
-                    }
-                    
-                    if (d.recommended_silo_name && d.closest_content_title) {
+                        html += '<p style="margin:0 0 10px 0; color:#4338ca;">Cet article est th\u00e9matiquement \u00e0 sa place (<strong>' + proxPercent + '%</strong>) mais se comporte comme un "Parasite" : il ne renvoie aucun lien vers son propre silo.</p>';
                         html += '<div style="margin-top:8px; padding-top:8px; border-top:1px solid #ddd6fe;">';
-                        html += '\ud83d\udca1 <strong>Conseil IA :</strong> D\u00e9placez cet article vers le silo <strong>' + d.recommended_silo_name + '</strong> (proche de <em>"' + d.closest_content_title + '"</em>).';
-                        html += '<div style="margin-top:10px; text-align:center;">';
-                        html += '<button class="button button-primary sil-reco-bridge-btn" data-source="' + postId + '" data-target="' + d.closest_content_id + '" data-title="' + d.closest_content_title.replace(/"/g,'&quot;') + '" style="font-size:11px; padding:4px 12px; height:auto; line-height:1.4; border-radius:20px;">\ud83c\udf09 Cr\u00e9er un Pont S\u00e9mantique Direct</button>';
-                        html += '</div></div>';
+                        html += '<div style="display:flex; align-items:flex-start; gap:8px; color:#1e293b; line-height:1.4;">' + silGraphData.icons.lightbulb + ' <span><strong>Conseil IA :</strong> Ajoutez des liens sortants depuis cet article vers d\'autres pages de son silo actuel (<strong>' + siloLabel + '</strong>).</span></div>';
+                        
+                        if (cornerstoneId && cornerstoneId !== postId) {
+                            html += '<div style="margin-top:12px; text-align:center;">';
+                            html += '<button class="button button-primary sil-seal-btn" data-source="' + postId + '" data-target="' + cornerstoneId + '" style="font-size:11px; padding:6px 16px; height:auto; line-height:1.4; border-radius:20px; display:inline-flex; align-items:center; gap:8px;">' + silGraphData.icons.link + ' Lier au Pilier du Silo</button>';
+                            html += '</div>';
+                        }
+                        html += '</div>';
                     }
                     html += '</div>';
                 } else {
                     // Traffic Alerts
                     if (permeability > 35) {
-                        html += '<div style="background:#fee2e2;border:1px solid #f87171;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;">\u26a0\ufe0f <strong style="color:#b91c1c;">Fuite s\u00e9mantique (' + permeability + '%)</strong><br><span style="color:#7f1d1d;">Le jus s\'\u00e9chappe vers ' + semanticTarget + '.</span></div>';
+                        const targetLabel = siloLabels[String(semanticTarget)] || ('Silo ' + semanticTarget);
+                        html += '<div style="background:#fee2e2;border:1px solid #f87171;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;">\u26a0\ufe0f <strong style="color:#b91c1c;">Fuite s\u00e9mantique (' + permeability + '%)</strong><br><span style="color:#7f1d1d;">Le jus s\'\u00e9chappe vers ' + targetLabel + '.</span></div>';
                     } else if (permeability < 5 && String(clusterId) !== '0') {
                         html += '<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;">\ud83d\udd12 <strong style="color:#d97706;">Silo cloisonn\u00e9 (' + permeability + '%)</strong><br><span style="color:#92400e;">Peu d\'interaction avec les autres silos.</span></div>';
                     }
@@ -430,14 +573,26 @@ jQuery(document).ready(function ($) {
                 if (d.outgoing_links && d.outgoing_links.length > 0) {
                     html += '<div style="margin-top:15px; border-top:1px solid #e2e8f0; padding-top:12px;">';
                     html += '<strong style="font-size:10px; text-transform:uppercase; color:#94a3b8;">Liens sortants (' + d.outgoing_links.length + ')</strong>';
-                    html += '<ul style="margin:8px 0 0; padding:0; list-style:none; max-height:120px; overflow-y:auto;">';
-                    d.outgoing_links.slice(0, 10).forEach(function(lnk) {
-                        html += '<li style="padding:4px 0; border-bottom:1px solid #f1f5f9; font-size:11px; display:flex; align-items:center; gap:8px;">';
-                        html += '<span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#334155;">' + (lnk.title || lnk.url) + '</span>';
+                    html += '<ul style="margin:8px 0 0; padding:0; list-style:none; max-height:150px; overflow-y:auto;">';
+                    d.outgoing_links.forEach(function(lnk) {
+                        let icon = '🏠';
+                        let color = '#3b82f6';
+                        if (lnk.type === 'external') { icon = '🌍'; color = '#8b5cf6'; }
+                        else if (lnk.type === 'broken') { icon = '⚠️'; color = '#ef4444'; }
+
+                        html += '<li class="sil-link-item" style="padding:4px 8px; border-bottom:1px solid #f1f5f9; font-size:11px; display:flex; align-items:center; gap:8px; cursor:pointer; transition:background 0.2s;" data-context-prev="' + (lnk.context_prev || '') + '" data-context-next="' + (lnk.context_next || '') + '" data-anchor="' + lnk.anchor + '" data-url="' + lnk.url + '">';
+                        html += '<span style="font-size:12px;" title="' + lnk.type + '">' + icon + '</span>';
+                        html += '<span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#334155;" title="' + lnk.url + '"><strong>' + (lnk.title || lnk.url) + '</strong><br/><small style="color:#64748b;">' + lnk.anchor + '</small></span>';
                         html += '<button class="sil-delete-link-btn" title="Supprimer" style="flex-shrink:0; background:none; border:1px solid #f87171; color:#dc2626; border-radius:4px; padding:0 4px; font-size:12px; line-height:1; cursor:pointer;" data-source="' + postId + '" data-target-url="' + lnk.url + '">\u00d7</button>';
                         html += '</li>';
                     });
-                    html += '</ul></div>';
+                    html += '</ul>';
+                    // Context Inspector Placeholder
+                    html += '<div id="sil-link-inspector" style="display:none; margin-top:10px; padding:10px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-size:11px;">';
+                    html += '<div style="font-weight:700; color:#1e293b; margin-bottom:5px;">🔍 Inspecteur de Contexte</div>';
+                    html += '<div id="sil-inspector-content" style="color:#475569; line-height:1.5;"></div>';
+                    html += '</div>';
+                    html += '</div>';
                 }
 
                 // --- NEW: MISSING INLINKS MODULE ---
@@ -476,13 +631,13 @@ jQuery(document).ready(function ($) {
                     post_id: postId
                 }, function(res) {
                     const $list = $('#sil-missing-inlinks-list');
-                    if (res.success && res.data && res.data.length > 0) {
+                    if (res.success && res.data && res.data.suggestions && res.data.suggestions.length > 0) {
                         let listHtml = '<ul style="margin:0; padding:0; list-style:none;">';
-                        res.data.forEach(item => {
+                        res.data.suggestions.forEach(item => {
                             listHtml += `<li style="margin-bottom:10px; padding:10px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; font-size:11px;">
                                 <div style="font-weight:700; color:#1e293b; margin-bottom:5px;">${item.title}</div>
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span style="color:#059669; font-weight:700;">Similarity: ${Math.round(item.similarity * 100)}%</span>
+                                    <span style="color:#059669; font-weight:700;">Similarity: ${item.similarity}%</span>
                                     <button class="button button-small sil-reco-bridge-btn" 
                                             data-source="${item.id}" 
                                             data-target="${postId}" 
@@ -496,8 +651,11 @@ jQuery(document).ready(function ($) {
                         listHtml += '</ul>';
                         $list.html(listHtml);
                     } else {
-                        $list.html('<p style="font-size:11px; color:#64748b; font-style:italic;">Aucune opportunité détectée dans ce silo.</p>');
+                        const msg = (res.data && res.data.message) ? res.data.message : 'Aucune opportunité détectée dans ce silo.';
+                        $list.html('<p style="font-size:11px; color:#64748b; font-style:italic;">' + msg + '</p>');
                     }
+                }).fail(function() {
+                    $('#sil-missing-inlinks-list').html('<p style="font-size:11px; color:#ef4444;">Erreur lors du chargement des opportunités.</p>');
                 });
             });
         });
@@ -561,6 +719,27 @@ jQuery(document).ready(function ($) {
                 if (r.success) $btn.closest('li').fadeOut();
                 else { alert('Erreur : ' + (r.data || 'Inconnue')); $btn.prop('disabled', false).text('\u00d7'); }
             });
+        });
+
+        $(document).on('click', '.sil-link-item', function(e) {
+            if ($(e.target).closest('button').length > 0) return; 
+            const $item = $(this);
+            const prev = $item.data('context-prev');
+            const anchor = $item.data('anchor');
+            const next = $item.data('context-next');
+            const url = $item.data('url');
+
+            const $inspector = $('#sil-link-inspector');
+            const $content = $('#sil-inspector-content');
+
+            $('.sil-link-item').css('background', 'transparent');
+            $item.css('background', '#e0f2fe');
+
+            let snippet = prev + ' <strong style="background:#fde047; padding:0 2px; border-radius:2px;">' + anchor + '</strong> ' + next;
+            $content.html('<div style="margin-bottom:8px; font-style:italic; border-left:3px solid #cbd5e1; padding-left:8px;">"' + snippet + '"</div>');
+            $content.append('<div style="word-break:break-all; font-size:9px; color:#94a3b8;">URL: ' + url + '</div>');
+            
+            $inspector.slideDown(200);
         });
 
         // --- LOGIQUE PONT SÉMANTIQUE ---
@@ -687,6 +866,34 @@ jQuery(document).ready(function ($) {
                 }
             });
         });
+        $(document).on('click', '.sil-seal-btn', function() {
+            const $btn = $(this);
+            const sourceId = $btn.data('source');
+            const targetId = $btn.data('target');
+            
+            $btn.prop('disabled', true).html('<span class="spinner is-active"></span> Scellage...');
+
+            $.post(silGraphData.ajaxurl || ajaxurl, {
+                action: 'sil_seal_reciprocal_link',
+                nonce: silGraphData.nonce,
+                source_id: sourceId,
+                target_id: targetId
+            }, function(res) {
+                if (res.success) {
+                    $btn.removeClass('button').addClass('sil-badge sil-badge-success').html('✅ Silo Scellé');
+                    // Optionnel : rafraîchir le noeud dans Cytoscape
+                    const node = cy.getElementById(String(sourceId));
+                    if (node.length) {
+                        node.data('has_reciprocal_link', 'true');
+                        node.style({ 'border-style': 'solid', 'border-color': '#10b981' });
+                    }
+                } else {
+                    alert(res.data || 'Erreur lors du scellage');
+                    $btn.prop('disabled', false).text('🚀 Réessayer le Scellage');
+                }
+            });
+        });
+
 
         $(document).on('click', '.sil-reco-bridge-btn', function() {
             const $btn = $(this);
@@ -740,36 +947,13 @@ jQuery(document).ready(function ($) {
                 target_id: $btn.data('target'),
                 anchor_text: $btn.data('anchor')
             }, function (response) {
+                $btn.prop('disabled', false).text('🌉 Créer un pont sémantique');
                 if (response.success) {
-                    const promptText = response.data.prompt;
-                    const modalHtml = `
-                    <div id="sil-ai-modal-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999;display:flex;justify-content:center;align-items:center;">
-                        <div style="background:#fff;width:90%;max-width:900px;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,0.2);display:flex;flex-direction:column;overflow:hidden;">
-                            <div style="padding:15px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
-                                <h3 style="margin:0;">🤖 Workflow IA : Pont Sémantique</h3>
-                                <button id="sil-ai-modal-close" style="background:none;border:none;font-size:20px;cursor:pointer;">&times;</button>
-                            </div>
-                            <div style="display:flex;flex-direction:row;height:60vh;">
-                                <div style="flex:1;padding:20px;border-right:1px solid #e2e8f0;background:#f8fafc;">
-                                    <label style="font-weight:bold;display:block;margin-bottom:10px;">1. Copiez ce Prompt :</label>
-                                    <textarea id="sil-prompt-text" readonly style="width:100%;height:85%;padding:10px;font-family:monospace;font-size:12px;border:1px solid #cbd5e1;background:#fff;resize:none;">${promptText}</textarea>
-                                </div>
-                                <div style="flex:1;padding:20px;">
-                                    <label style="font-weight:bold;display:block;margin-bottom:10px;">2. Collez le résultat HTML ici :</label>
-                                    <textarea id="sil-ai-modal-editor" style="width:100%;height:85%;padding:10px;font-family:monospace;font-size:12px;border:2px solid #3b82f6;border-radius:4px;"></textarea>
-                                </div>
-                            </div>
-                            <div style="padding:15px;background:#f8fafc;border-top:1px solid #e2e8f0;text-align:right;">
-                                <button id="sil-ai-modal-cancel" class="button" style="margin-right:10px;">Annuler</button>
-                                <button id="sil-ai-modal-confirm" class="button button-primary" data-source="${response.data.source_id}" data-target="${response.data.target_id}" data-original="${response.data.original}">Sauvegarder l'insertion</button>
-                            </div>
-                        </div>
-                    </div>`;
-                    $('body').append(modalHtml);
-                    $btn.prop('disabled', false).text('🌉 Créer un pont sémantique');
+                    if (typeof window.openBridgeModal === 'function') {
+                        window.openBridgeModal(response.data);
+                    }
                 } else {
                     alert(response.data);
-                    $btn.prop('disabled', false).text('🌉 Créer un pont sémantique');
                 }
             });
         });
@@ -799,11 +983,56 @@ jQuery(document).ready(function ($) {
                 }
             });
         });
+
+    /**
+     * Ouvre la modale de création de pont sémantique (Workflow IA).
+     * Accessible globalement pour être appelée depuis le Dashboard (admin.js).
+     */
+    window.openBridgeModal = function(data) {
+        const promptText = data.prompt;
+        const modalHtml = `
+        <div id="sil-ai-modal-overlay">
+            <div class="sil-modal-container">
+                <div class="sil-modal-header">
+                    <h3>
+                        <span style="background:var(--sil-primary);color:#fff;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;">🤖</span>
+                        Workflow IA : Pont Sémantique Direct
+                    </h3>
+                    <button id="sil-ai-modal-close" class="sil-modal-close-btn">&times;</button>
+                </div>
+                <div class="sil-modal-body">
+                    <div class="sil-modal-column alt-bg">
+                        <label class="sil-modal-label">1. Copiez le Prompt</label>
+                        <p class="sil-modal-desc">Utilisez ce contexte structuré dans Gemini ou ChatGPT pour générer un paragraphe d'insertion fluide.</p>
+                        <textarea id="sil-prompt-text" class="sil-modal-textarea" readonly>${promptText}</textarea>
+                        <button class="button button-secondary" style="margin-top:16px;width:100%;" onclick="const t=document.getElementById('sil-prompt-text');t.select();document.execCommand('copy');this.innerText='✅ Copié !';setTimeout(()=>this.innerText='📋 Copier le prompt',2000);">
+                            📋 Copier le prompt
+                        </button>
+                    </div>
+                    <div class="sil-modal-column">
+                        <label class="sil-modal-label">2. Collez le résultat HTML</label>
+                        <p class="sil-modal-desc">L'IA doit vous retourner un paragraphe contenant le lien <code>&lt;a href="..."&gt;</code>.</p>
+                        <textarea id="sil-ai-modal-editor" class="sil-modal-textarea editor" placeholder="Collez ici le paragraphe généré..."></textarea>
+                    </div>
+                </div>
+                <div class="sil-modal-footer">
+                    <button id="sil-ai-modal-cancel" class="button">Annuler</button>
+                    <button id="sil-ai-modal-confirm" class="button button-primary" data-source="${data.source_id}" data-target="${data.target_id}" data-original="${data.original}">🚀 Sauvegarder l'insertion</button>
+                </div>
+            </div>
+        </div>`;
+        $('body').append(modalHtml);
+    };
     // End of Document event handlers
 
     function handleGraphError(msg) {
         $('#sil-graph-loading').hide();
-        $container.html('<div style="padding:30px;text-align:center;color:#b91c1c;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;"><strong>\u26a0\ufe0f \u00c9chec :</strong><br>' + msg + '<br><br><button class="button sil-retry-btn">R\u00e9essayer</button></div>');
+        let displayMsg = msg;
+        if (typeof msg === 'object' && msg !== null) {
+            displayMsg = (msg.message || 'Erreur inconnue') + 
+                         (msg.file ? '<br><small>Fichier: ' + msg.file + ' (Ligne ' + msg.line + ')</small>' : '');
+        }
+        $container.html('<div style="padding:30px;text-align:center;color:#b91c1c;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;"><strong>\u26a0\ufe0f \u00c9chec :</strong><br>' + displayMsg + '<br><br><button class="button sil-retry-btn">R\u00e9essayer</button></div>');
         $('.sil-retry-btn').on('click', function(e) {
             e.preventDefault();
             location.reload();

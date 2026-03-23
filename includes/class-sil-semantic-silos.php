@@ -20,7 +20,7 @@ class SIL_Semantic_Silos {
     const DEFAULT_M          = 2.0;   // Fuzziness exponent
     const MAX_ITER           = 150;
     const CONVERGENCE_EPS    = 1e-5;
-    const BRIDGE_THRESHOLD   = 0.30;  // Secondary silo score to flag as bridge
+    const BRIDGE_THRESHOLD   = 0.20;  // Secondary silo score to flag as bridge
 
     private $wpdb;
     private $table_embeddings;
@@ -112,27 +112,95 @@ class SIL_Semantic_Silos {
      * @return array [ silo_id => label ]
      */
     public function get_silo_labels(): array {
-        $silos = $this->wpdb->get_col(
-            "SELECT DISTINCT silo_id FROM {$this->table_membership} WHERE is_primary = 1 ORDER BY silo_id"
-        );
-
         $labels = [];
-        foreach ( $silos as $silo_id ) {
-            $post_ids = $this->get_silo_members( (int) $silo_id, true );
-            $cats     = [];
-            foreach ( array_slice( $post_ids, 0, 30 ) as $pid ) {
-                $c = get_the_category( $pid );
-                if ( ! empty( $c ) ) $cats[] = $c[0]->name;
+        $silo_ids = $this->wpdb->get_col("SELECT DISTINCT silo_id FROM {$this->table_membership} ORDER BY silo_id ASC");
+        
+        foreach ($silo_ids as $sid) {
+            $sid = (int)$sid;
+            // The first member in the silo is the most representative (Pivot)
+            $member_ids = $this->get_silo_members($sid, true);
+            
+            if (empty($member_ids)) {
+                $labels[$sid] = "Silo $sid";
+                continue;
             }
-            if ( ! empty( $cats ) ) {
-                $counts = array_count_values( $cats );
-                arsort( $counts );
-                $labels[ (int) $silo_id ] = 'Silo : ' . array_key_first( $counts );
+
+            $pivot_id = $member_ids[0];
+            $gsc_raw = get_post_meta($pivot_id, '_sil_gsc_data', true);
+            
+            // Handle both JSON and Serialized data (SEO-safe parsing)
+            $gsc = is_array($gsc_raw) ? $gsc_raw : json_decode($gsc_raw, true);
+            if (empty($gsc) && is_string($gsc_raw) && $gsc_raw) {
+                $gsc = function_exists('maybe_unserialize') ? maybe_unserialize($gsc_raw) : unserialize($gsc_raw);
+            }
+
+            $rows = $gsc['top_queries'] ?? ($gsc ?: []);
+            $keywords = [];
+
+            if (is_array($rows)) {
+                foreach (array_slice($rows, 0, 3) as $r) {
+                    $raw_kw = $r['query'] ?? ($r['keys'][0] ?? '');
+                    if ($raw_kw) {
+                        // Decode potential literal Unicode escape sequences (\u00e0 -> à)
+                        $kw = preg_replace_callback('/(?:\\\\+)?u([0-9a-fA-F]{4})/', function ($match) {
+                            return mb_convert_encoding(pack('H*', $match[1]), 'UTF-8', 'UCS-2BE');
+                        }, $raw_kw);
+                        $keywords[] = wp_specialchars_decode($kw, ENT_QUOTES);
+                    }
+                }
+            }
+
+            if (!empty($keywords)) {
+                // Return " [ID] Keyword1, Keyword2, Keyword3"
+                $labels[$sid] = sprintf("[%d] %s", $sid, implode(', ', $keywords));
             } else {
-                $labels[ (int) $silo_id ] = 'Silo ' . $silo_id;
+                // Fallback: [ID] + First 4 words of Pivot Title
+                $title = get_the_title($pivot_id);
+                $labels[$sid] = sprintf("[%d] %s", $sid, wp_trim_words($title, 4));
             }
         }
         return $labels;
+    }
+
+    /**
+     * Compute a distance matrix between all silos based on their centroids.
+     */
+    public function get_silo_distance_matrix(): array {
+        $embeddings = $this->load_embeddings();
+        if (empty($embeddings)) return [];
+        
+        $k = (int) $this->wpdb->get_var("SELECT COUNT(DISTINCT silo_id) FROM {$this->table_membership}");
+        if ($k < 2) return [];
+
+        // 1. Calculate Centroids
+        $U = [];
+        $post_ids = [];
+        $rows = $this->wpdb->get_results("SELECT post_id, silo_id, score FROM {$this->table_membership}", ARRAY_A);
+        $pid_to_idx = [];
+        foreach($rows as $row) {
+            $pid = (int)$row['post_id'];
+            if (!isset($pid_to_idx[$pid])) {
+                $pid_to_idx[$pid] = count($post_ids);
+                $post_ids[] = $pid;
+            }
+            $U[$pid_to_idx[$pid]][(int)$row['silo_id'] - 1] = (float)$row['score'];
+        }
+        
+        $centroids = $this->compute_centroids($embeddings, $post_ids, $U, $k, 2.0);
+        
+        // 2. Compute Distance Matrix (Cosine Distance)
+        $matrix = [];
+        for($i=0; $i<$k; $i++) {
+            for($j=0; $j<$k; $j++) {
+                if ($i === $j) {
+                    $matrix[$i+1][$j+1] = 0;
+                } else {
+                    $sim = $this->cosine_similarity($centroids[$i], $centroids[$j]);
+                    $matrix[$i+1][$j+1] = round(1 - $sim, 4);
+                }
+            }
+        }
+        return $matrix;
     }
 
     /**
@@ -201,7 +269,7 @@ class SIL_Semantic_Silos {
      *
      * @return array [ post_id => float[] ]
      */
-    private function load_embeddings(): array {
+    public function load_embeddings(): array {
         $rows = $this->wpdb->get_results(
             "SELECT post_id, embedding FROM {$this->table_embeddings}",
             ARRAY_A

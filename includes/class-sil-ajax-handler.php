@@ -41,9 +41,14 @@ class SIL_Ajax_Handler
     {
         add_action( 'wp_ajax_sil_index_embeddings_batch', [ $handler, 'sil_index_embeddings_batch' ] );
         add_action( 'wp_ajax_sil_get_indexing_status', [ $handler, 'sil_get_indexing_status' ] );
+        add_action('wp_ajax_sil_rebuild_semantic_silos', [$handler, 'sil_rebuild_semantic_silos']);
+        add_action('wp_ajax_sil_get_missing_inlinks',    [$handler, 'sil_get_missing_inlinks']);
+        add_action('wp_ajax_sil_seal_reciprocal_link',  [$handler, 'sil_seal_reciprocal_link']);
         add_action( 'wp_ajax_sil_run_semantic_audit', [ $handler, 'sil_run_semantic_audit' ] );
         add_action( 'wp_ajax_sil_run_system_diagnostic', [ $handler, 'sil_run_system_diagnostic' ] );
         add_action( 'wp_ajax_sil_run_deep_unit_tests', [ $handler, 'sil_run_deep_unit_tests' ] );
+        add_action( 'wp_ajax_sil_get_edge_context', [ $handler, 'sil_get_edge_context' ] );
+        add_action( 'wp_ajax_sil_toggle_edge_nofollow', [ $handler, 'sil_toggle_edge_nofollow' ] );
     }
 
     /**
@@ -91,9 +96,21 @@ class SIL_Ajax_Handler
             $result = $this->main->get_rendered_graph_data($force);
 
             wp_send_json_success($result);
-        } catch (Exception $e) {
-
-            wp_send_json_error($e->getMessage());
+        } catch (Throwable $e) {
+            $err_msg = sprintf(
+                "SIL Error: %s in %s on line %d\nTrace: %s",
+                $e->getMessage(),
+                $e->getFile(),
+                $e->getLine(),
+                $e->getTraceAsString()
+            );
+            error_log($err_msg);
+            
+            wp_send_json_error([
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
         }
     }
 
@@ -114,30 +131,40 @@ class SIL_Ajax_Handler
             wp_send_json_error('Aucun ID fourni');
         }
 
-        require_once SIL_PLUGIN_DIR . 'includes/class-sil-gsc-sync.php';
-        $gsc_sync = new \Sil_Gsc_Sync();
+        try {
+            require_once SIL_PLUGIN_DIR . 'includes/class-sil-gsc-sync.php';
+            $gsc_sync = new \Sil_Gsc_Sync();
 
-        if (!$gsc_sync->is_configured()) {
-            wp_send_json_error('GSC non configuré (Client ID/Secret manquant)');
+            if (!$gsc_sync->is_configured()) {
+                wp_send_json_error('GSC non configuré (Client ID/Secret manquant)');
+            }
+
+            // Pour tracker juste ce lot, on va lire l'ancien compteur
+            $old_count = (int) get_transient('sil_last_sync_keyw_count') ?: 0;
+
+            $result = $gsc_sync->sync_data($post_ids);
+
+            if (is_wp_error($result)) {
+                /** @var \WP_Error $result */
+                wp_send_json_error($result->get_error_message());
+            }
+
+            // Calcul du nombre de mots-clés ajoutés lors de cette execution
+            $new_count = (int) get_transient('sil_last_sync_keyw_count') ?: 0;
+            $batch_keywords_saved = max(0, $new_count - $old_count);
+
+            wp_send_json_success([
+                'message' => count($post_ids) . ' pages traitées',
+                'keywords_saved' => $batch_keywords_saved
+            ]);
+        } catch (Throwable $e) {
+            error_log("SIL Batch Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+            wp_send_json_error([
+                'message' => 'Erreur lors du traitement du lot : ' . $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
         }
-
-        // Pour tracker juste ce lot, on va lire l'ancien compteur
-        $old_count = (int) get_transient('sil_last_sync_keyw_count') ?: 0;
-
-        $result = $gsc_sync->sync_data($post_ids);
-
-        if (is_wp_error($result)) {
-            wp_send_json_error($result->get_error_message());
-        }
-
-        // Calcul du nombre de mots-clés ajoutés lors de cette execution
-        $new_count = (int) get_transient('sil_last_sync_keyw_count') ?: 0;
-        $batch_keywords_saved = max(0, $new_count - $old_count);
-
-        wp_send_json_success([
-            'message' => count($post_ids) . ' pages traitées',
-            'keywords_saved' => $batch_keywords_saved
-        ]);
     }
 
     /**
@@ -427,6 +454,7 @@ class SIL_Ajax_Handler
     public function sil_get_node_details()
     {
         check_ajax_referer('sil_nonce', 'nonce');
+        global $wpdb;
         if (!current_user_can('edit_posts')) {
             wp_send_json_error('Permission refusée');
         }
@@ -445,22 +473,40 @@ class SIL_Ajax_Handler
         if ($post) {
             $content = $post->post_content;
             $site_host = parse_url(home_url(), PHP_URL_HOST);
-            preg_match_all('/<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)<\/a>/i', $content, $matches);
+            preg_match_all('/<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)<\/a>/is', $content, $matches, PREG_OFFSET_CAPTURE);
             if (!empty($matches[0])) {
-                foreach ($matches[1] as $index => $url) {
+                foreach ($matches[1] as $index => $match_url) {
+                    $url = $match_url[0];
                     if (preg_match('/^(#|mailto:|tel:|javascript:)/i', $url)) continue;
 
+                    $full_tag = $matches[0][$index][0];
+                    $anchor = wp_strip_all_tags($matches[2][$index][0]);
+                    $offset = $matches[0][$index][1];
+
                     $url_host = parse_url($url, PHP_URL_HOST);
-                    if (empty($url_host) || $url_host === $site_host) {
-                        $target_post_id = url_to_postid($url);
-                        $target_title = $target_post_id ? get_the_title($target_post_id) : 'Page externe ou inconnue';
-                        $outgoing_links[] = [
-                            'url' => $url,
-                            'anchor' => wp_strip_all_tags($matches[2][$index]),
-                            'title' => $target_title,
-                            'target_id' => $target_post_id
-                        ];
+                    $is_external = !empty($url_host) && strtolower($url_host) !== strtolower($site_host);
+                    
+                    $target_post_id = $is_external ? 0 : url_to_postid($url);
+                    $type = 'internal';
+                    if ($is_external) {
+                        $type = 'external';
+                    } elseif (!$target_post_id) {
+                        $type = 'broken';
                     }
+
+                    // Capture context around the link
+                    $context_prev = strip_tags(substr($content, max(0, $offset - 45), min($offset, 45)));
+                    $context_next = strip_tags(substr($content, $offset + strlen($full_tag), 45));
+
+                    $outgoing_links[] = [
+                        'url' => $url,
+                        'anchor' => $anchor,
+                        'title' => $target_post_id ? get_the_title($target_post_id) : ($is_external ? $url_host : 'Page inconnue'),
+                        'target_id' => $target_post_id,
+                        'type' => $type,
+                        'context_prev' => '...' . $context_prev,
+                        'context_next' => $context_next . '...'
+                    ];
                 }
             }
         }
@@ -783,6 +829,103 @@ class SIL_Ajax_Handler
 
         $this->main->clear_graph_cache();
         wp_send_json_success('Lien ajouté avec succès');
+    }
+
+    /**
+     * AJAX: Seal reciprocal link (1-click action)
+     * Automatically finds best anchor and inserts link to Cornerstone.
+     */
+    public function sil_seal_reciprocal_link()
+    {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Permission refusée');
+        }
+
+        $source_id = isset($_POST['source_id']) ? intval($_POST['source_id']) : 0;
+        $target_id = isset($_POST['target_id']) ? intval($_POST['target_id']) : 0;
+
+        if (!$source_id || !$target_id) {
+            wp_send_json_error('Paramètres manquants');
+        }
+
+        $source_post = get_post($source_id);
+        $target_post = get_post($target_id);
+
+        if (!$source_post || !$target_post) {
+            wp_send_json_error('Source ou Cible introuvable');
+        }
+
+        $target_url = get_permalink($target_id);
+        $content = $source_post->post_content;
+
+        // 1. Get Anchors (GSC > Title)
+        $anchors = [];
+        $gsc_data_json = get_post_meta($target_id, '_sil_gsc_data', true);
+        if ($gsc_data_json) {
+            $gsc_data = is_array($gsc_data_json) ? $gsc_data_json : json_decode($gsc_data_json, true);
+            $rows = isset($gsc_data['top_queries']) ? $gsc_data['top_queries'] : $gsc_data;
+            if (is_array($rows)) {
+                foreach (array_slice($rows, 0, 5) as $r) {
+                    $kw = isset($r['query']) ? $r['query'] : (isset($r['keys'][0]) ? $r['keys'][0] : '');
+                    if ($kw) $anchors[] = $kw;
+                }
+            }
+        }
+        $anchors[] = $target_post->post_title;
+
+        // 2. Try to inject on existing anchor
+        $sealed = false;
+        foreach ($anchors as $anchor) {
+            $quoted_anchor = preg_quote($anchor, '/');
+            $pattern = '/(?<!<a[^>]*>)(?<!<h[1-6][^>]*>)\b' . $quoted_anchor . '\b(?![^<]*<\/a>)(?![^<]*<\/h[1-6]>)/i';
+            $new_content = preg_replace($pattern, '<a href="' . esc_url($target_url) . '">' . $anchor . '</a>', $content, 1, $count);
+            
+            if ($count > 0) {
+                wp_update_post(['ID' => $source_id, 'post_content' => $new_content]);
+                $sealed = true;
+                break;
+            }
+        }
+
+        // 3. Fallback: Append at end of first paragraph
+        if (!$sealed) {
+            $paragraphs = preg_split('/(\r\n|\n|\r)/', $content);
+            $anchor = $anchors[0]; // Use best anchor
+            foreach ($paragraphs as &$p) {
+                if (trim($p) && strpos($p, '<p') === 0) {
+                    $p = preg_replace('/<\/p>/', ' <a href="' . esc_url($target_url) . '">' . esc_html($anchor) . '</a>.</p>', $p, 1, $c);
+                    if ($c > 0) {
+                        $sealed = true;
+                        break;
+                    }
+                }
+            }
+            if ($sealed) {
+                wp_update_post(['ID' => $source_id, 'post_content' => implode("\n", $paragraphs)]);
+            } else {
+                // Last resort append
+                $new_content = $content . "\n\n<p>En savoir plus sur : <a href=\"" . esc_url($target_url) . "\">" . esc_html($anchor) . "</a>.</p>";
+                wp_update_post(['ID' => $source_id, 'post_content' => $new_content]);
+                $sealed = true;
+            }
+        }
+
+        // Log in sil_links
+        global $wpdb;
+        $wpdb->insert(
+            $wpdb->prefix . 'sil_links',
+            [
+                'source_id' => $source_id,
+                'target_id' => $target_id,
+                'target_url' => $target_url,
+                'anchor' => $anchors[0]
+            ],
+            ['%d', '%d', '%s', '%s']
+        );
+
+        $this->main->clear_graph_cache();
+        wp_send_json_success('Silo scellé avec succès !');
     }
 
     /**
@@ -1311,36 +1454,45 @@ class SIL_Ajax_Handler
         check_ajax_referer('sil_nonce', 'nonce');
         if (!current_user_can('manage_options')) wp_send_json_error('Accès refusé.');
 
-        global $wpdb;
-        $report = [];
+        try {
+            global $wpdb;
+            $report = [];
 
-        // 1. Check Embeddings
-        $total_posts = (int) $wpdb->get_var("SELECT COUNT(*) FROM $wpdb->posts WHERE post_status='publish' AND post_type IN ('post', 'page')");
-        $indexed_posts = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->main->table_name}");
-        $report['embeddings'] = [
-            'status' => ($indexed_posts >= $total_posts && $total_posts > 0) ? '✅' : '⚠️',
-            'label'  => "Couverture Sémantique",
-            'desc'   => "$indexed_posts / $total_posts articles indexés."
-        ];
+            // 1. Check Embeddings
+            $total_posts = (int) $wpdb->get_var("SELECT COUNT(*) FROM $wpdb->posts WHERE post_status='publish' AND post_type IN ('post', 'page')");
+            $indexed_posts = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$this->main->table_name}");
+            $report['embeddings'] = [
+                'status' => ($indexed_posts >= $total_posts && $total_posts > 0) ? '✅' : '⚠️',
+                'label'  => "Couverture Sémantique",
+                'desc'   => "$indexed_posts / $total_posts articles indexés."
+            ];
 
-        // 2. Check GSC Data
-        $gsc_table = $wpdb->prefix . 'sil_gsc_data';
-        $gsc_count = (int) $wpdb->get_var("SELECT COUNT(*) FROM $gsc_table");
-        $report['gsc'] = [
-            'status' => ($gsc_count > 0) ? '✅' : '❌',
-            'label'  => "Données Search Console",
-            'desc'   => "$gsc_count articles avec métriques GSC actives."
-        ];
+            // 2. Check GSC Data
+            $gsc_table = $wpdb->prefix . 'sil_gsc_data';
+            $gsc_count = (int) $wpdb->get_var("SELECT COUNT(*) FROM $gsc_table");
+            $report['gsc'] = [
+                'status' => ($gsc_count > 0) ? '✅' : '❌',
+                'label'  => "Données Search Console",
+                'desc'   => "$gsc_count articles avec métriques GSC actives."
+            ];
 
-        // 3. Check Topology (Links)
-        $links = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sil_links");
-        $report['topology'] = [
-            'status' => ($links > $total_posts) ? '✅' : '⚖️',
-            'label'  => "Densité Topologique",
-            'desc'   => "$links liens internes suivis."
-        ];
+            // 3. Check Topology (Links)
+            $links = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sil_links");
+            $report['topology'] = [
+                'status' => ($links > $total_posts) ? '✅' : '⚖️',
+                'label'  => "Densité Topologique",
+                'desc'   => "$links liens internes suivis."
+            ];
 
-        wp_send_json_success($report);
+            wp_send_json_success($report);
+        } catch (Throwable $e) {
+            error_log("SIL Diagnostic Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+            wp_send_json_error([
+                'message' => 'Erreur lors du diagnostic système : ' . $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+        }
     }
 
 
@@ -1371,46 +1523,77 @@ class SIL_Ajax_Handler
     public function sil_get_indexing_status() {
         check_ajax_referer( 'sil_nonce', 'nonce' );
         global $wpdb;
-        $total = (int) $wpdb->get_var("SELECT COUNT(*) FROM $wpdb->posts WHERE post_status='publish' AND post_type='post'");
-        $indexed = (int) $wpdb->get_var("SELECT COUNT(*) FROM $wpdb->postmeta WHERE meta_key='_sil_embedding'");
+
+        $post_types = $this->main->get_post_types();
+        $placeholders = implode(',', array_fill(0, count($post_types), '%s'));
+
+        $total = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $wpdb->posts WHERE post_status='publish' AND post_type IN ($placeholders)",
+            ...$post_types
+        ));
+
+        // Use the custom embeddings table instead of postmeta
+        $table_embeddings = $this->main->table_name;
+        $indexed = (int) $wpdb->get_var("SELECT COUNT(*) FROM $table_embeddings");
+
         wp_send_json_success([ 'total' => $total, 'indexed' => $indexed ]);
     }
 
     public function sil_index_embeddings_batch() {
-        check_ajax_referer( 'sil_nonce', 'nonce' );
-        $api_key = get_option('sil_openai_api_key');
-        if ( empty($api_key) ) wp_send_json_error('Clé OpenAI manquante.');
+        try {
+            check_ajax_referer( 'sil_nonce', 'nonce' );
+            global $wpdb;
 
-        $posts = get_posts([
-            'post_type' => 'post',
-            'post_status' => 'publish',
-            'posts_per_page' => 3,
-            'meta_query' => [
-                [ 'key' => '_sil_embedding', 'compare' => 'NOT EXISTS' ]
-            ]
-        ]);
+            $api_key = get_option('sil_openai_api_key');
+            if ( empty($api_key) ) wp_send_json_error('Clé OpenAI manquante.');
 
-        if ( empty($posts) ) wp_send_json_success(['processed' => 0, 'finished' => true]);
+            $post_types = $this->main->get_post_types();
+            $table_embeddings = $this->main->table_name;
 
-        foreach ($posts as $post) {
-            /** @var WP_Post $post */
-            if ( ! ( $post instanceof WP_Post ) ) continue;
-
-            $text = $post->post_title . "\n\n" . wp_strip_all_tags($post->post_content);
-            $response = wp_remote_post('https://api.openai.com/v1/embeddings', [
-                'timeout' => 30,
-                'headers' => [ 'Authorization' => 'Bearer ' . $api_key, 'Content-Type' => 'application/json' ],
-                'body' => json_encode(['model' => 'text-embedding-3-small', 'input' => mb_substr($text, 0, 6000)])
+            // Query posts that are NOT in the embeddings table
+            $posts = get_posts([
+                'post_type' => $post_types,
+                'post_status' => 'publish',
+                'posts_per_page' => 3,
+                'fields' => 'ids'
             ]);
 
-            if ( ! is_wp_error($response) ) {
-                $body = json_decode(wp_remote_retrieve_body($response), true);
-                if ( isset($body['data'][0]['embedding']) ) {
-                    update_post_meta($post->ID, '_sil_embedding', $body['data'][0]['embedding']);
+            // Manual filter because SQL JOIN is cleaner but get_posts is safer for WP hooks
+            $indexed_ids = $wpdb->get_col("SELECT post_id FROM $table_embeddings");
+            $to_index_ids = array_diff($posts, $indexed_ids);
+
+            if ( empty($to_index_ids) ) wp_send_json_success(['processed' => 0, 'finished' => true]);
+
+            // Process only a small batch
+            $batch = array_slice($to_index_ids, 0, 3);
+            foreach ($batch as $post_id) {
+                $post = get_post($post_id);
+                /** @var WP_Post $post */
+                if ( ! ( $post instanceof WP_Post ) ) continue;
+
+                $text = $post->post_title . "\n\n" . wp_strip_all_tags($post->post_content);
+                $response = wp_remote_post('https://api.openai.com/v1/embeddings', [
+                    'timeout' => 30,
+                    'headers' => [ 'Authorization' => 'Bearer ' . $api_key, 'Content-Type' => 'application/json' ],
+                    'body' => json_encode(['model' => 'text-embedding-3-small', 'input' => mb_substr($text, 0, 6000)])
+                ]);
+
+                if ( ! is_wp_error($response) ) {
+                    $body = json_decode(wp_remote_retrieve_body($response), true);
+                    if ( isset($body['data'][0]['embedding']) ) {
+                        update_post_meta($post->ID, '_sil_embedding', $body['data'][0]['embedding']);
+                    }
                 }
             }
+            wp_send_json_success(['processed' => count($posts), 'finished' => false]);
+        } catch (Throwable $e) {
+            error_log("SIL Index Batch Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+            wp_send_json_error([
+                'message' => 'Erreur lors de l\'indexation par lot : ' . $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
         }
-        wp_send_json_success(['processed' => count($posts), 'finished' => false]);
     }
 
     private function calculate_cosine_similarity($v1, $v2) {
@@ -1429,47 +1612,56 @@ class SIL_Ajax_Handler
     }
 
     public function sil_run_semantic_audit() {
-        check_ajax_referer('sil_nonce', 'nonce');
-        set_time_limit(120);
+        try {
+            check_ajax_referer('sil_nonce', 'nonce');
+            set_time_limit(120);
 
-        $posts = get_posts(['post_type' => 'post', 'post_status' => 'publish', 'posts_per_page' => -1]);
-        $clusters = []; $post_data = [];
+            $posts = get_posts(['post_type' => 'post', 'post_status' => 'publish', 'posts_per_page' => -1]);
+            $clusters = []; $post_data = [];
 
-        foreach ($posts as $p) {
-            /** @var WP_Post $p */
-            if ( ! ( $p instanceof WP_Post ) ) continue;
+            foreach ($posts as $p) {
+                /** @var WP_Post $p */
+                if ( ! ( $p instanceof WP_Post ) ) continue;
 
-            $cid = get_post_meta($p->ID, '_sil_cluster_id', true) ?: '1';
-            $emb = get_post_meta($p->ID, '_sil_embedding', true);
-            if ($emb && is_array($emb)) {
-                $clusters[$cid][] = $emb;
-                $post_data[$p->ID] = ['cid' => $cid, 'emb' => $emb];
+                $cid = get_post_meta($p->ID, '_sil_cluster_id', true) ?: '1';
+                $emb = get_post_meta($p->ID, '_sil_embedding', true);
+                if ($emb && is_array($emb)) {
+                    $clusters[$cid][] = $emb;
+                    $post_data[$p->ID] = ['cid' => $cid, 'emb' => $emb];
+                }
             }
+            if (empty($clusters)) wp_send_json_error('Veuillez lancer l\'indexation sémantique.');
+
+            $barycenters = [];
+            foreach ($clusters as $cid => $embs) { $barycenters[$cid] = $this->calculate_barycenter($embs); }
+
+            $intruders_count = 0;
+            foreach ($post_data as $pid => $data) {
+                $score = $this->calculate_cosine_similarity($data['emb'], $barycenters[$data['cid']]);
+                update_post_meta($pid, '_sil_semantic_score', round($score, 4));
+
+                $best_match = $data['cid']; $best_score = $score;
+                foreach($barycenters as $cid => $bar) {
+                    $s = $this->calculate_cosine_similarity($data['emb'], $bar);
+                    if($s > $best_score + 0.05) { $best_match = $cid; $best_score = $s; } 
+                }
+
+                if($best_match != $data['cid']) {
+                    update_post_meta($pid, '_sil_ideal_silo', $best_match);
+                    $intruders_count++;
+                } else {
+                    delete_post_meta($pid, '_sil_ideal_silo');
+                }
+            }
+            wp_send_json_success(['message' => "$intruders_count intrus détectés."]);
+        } catch (Throwable $e) {
+            error_log("SIL Audit Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+            wp_send_json_error([
+                'message' => 'Erreur lors de l\'audit sémantique : ' . $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
         }
-        if (empty($clusters)) wp_send_json_error('Veuillez lancer l\'indexation sémantique.');
-
-        $barycenters = [];
-        foreach ($clusters as $cid => $embs) { $barycenters[$cid] = $this->calculate_barycenter($embs); }
-
-        $intruders_count = 0;
-        foreach ($post_data as $pid => $data) {
-            $score = $this->calculate_cosine_similarity($data['emb'], $barycenters[$data['cid']]);
-            update_post_meta($pid, '_sil_semantic_score', round($score, 4));
-
-            $best_match = $data['cid']; $best_score = $score;
-            foreach($barycenters as $cid => $bar) {
-                $s = $this->calculate_cosine_similarity($data['emb'], $bar);
-                if($s > $best_score + 0.05) { $best_match = $cid; $best_score = $s; } 
-            }
-
-            if($best_match != $data['cid']) {
-                update_post_meta($pid, '_sil_ideal_silo', $best_match);
-                $intruders_count++;
-            } else {
-                delete_post_meta($pid, '_sil_ideal_silo');
-            }
-        }
-        wp_send_json_success(['message' => "$intruders_count intrus détectés."]);
     }
 
     public function sil_run_deep_unit_tests() {
@@ -1506,30 +1698,47 @@ class SIL_Ajax_Handler
             wp_send_json_error('Permission refusée');
         }
 
-        @set_time_limit(300);
+        try {
+            @set_time_limit(300);
 
-        $k = (int) get_option('sil_semantic_k', 6);
-        if ( $k < 2 ) $k = 2;
-        if ( $k > 20 ) $k = 20;
+            $k = (int) get_option('sil_semantic_k', 6);
+            if ( $k < 2 ) $k = 2;
+            if ( $k > 20 ) $k = 20;
 
-        $silos  = $this->main->semantic_silos;
-        $result = $silos->rebuild_silos($k);
+            $silos  = $this->main->semantic_silos;
+            $result = $silos->rebuild_silos($k);
 
-        if ( is_wp_error($result) ) {
-            wp_send_json_error($result->get_error_message());
+            if ( is_wp_error($result) ) {
+                /** @var \WP_Error $result */
+                wp_send_json_error($result->get_error_message());
+            }
+
+            // Invalidate graph cache to reflect new silos
+            if (method_exists($this->main, 'clear_graph_cache')) {
+                $this->main->clear_graph_cache();
+            }
+
+            wp_send_json_success([
+                'message'           => sprintf(
+                    '%d contenus traités en %d silos sémantiques. %d ponts détectés.',
+                    $result['articles_processed'],
+                    $result['silos_count'],
+                    $result['bridges_count']
+                ),
+                'count'              => $result['articles_processed'], // Alias for admin.js
+                'bridges'            => $result['bridges_count'],      // Alias for admin.js
+                'articles_processed' => $result['articles_processed'],
+                'silos_count'        => $result['silos_count'],
+                'bridges_count'      => $result['bridges_count'],
+            ]);
+        } catch (Throwable $e) {
+            error_log("SIL Rebuild Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+            wp_send_json_error([
+                'message' => 'Erreur lors de la reconstruction des silos : ' . $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
         }
-
-        wp_send_json_success([
-            'message'           => sprintf(
-                '%d articles traités en %d silos sémantiques. %d articles-ponts détectés.',
-                $result['articles_processed'],
-                $result['silos_count'],
-                $result['bridges_count']
-            ),
-            'articles_processed' => $result['articles_processed'],
-            'silos_count'        => $result['silos_count'],
-            'bridges_count'      => $result['bridges_count'],
-        ]);
     }
 
     /**
@@ -1542,119 +1751,303 @@ class SIL_Ajax_Handler
             wp_send_json_error('Permission refusée');
         }
 
-        $target_id = isset($_POST['post_id']) ? intval($_POST['post_id']) : 0;
-        if ( ! $target_id ) {
-            wp_send_json_error('ID manquant');
-        }
-
-        global $wpdb;
-        $silos = $this->main->semantic_silos;
-
-        // 1. Get target post's primary silo
-        $primary_silo = $silos->get_primary_silo($target_id);
-        if ( ! $primary_silo ) {
-            wp_send_json_error('Cet article n\'a pas encore été assigné à un silo sémantique. Recalculez les silos d\'abord.');
-        }
-
-        // 2. Get all posts in the same silo (primary + bridges)
-        $silo_members = $silos->get_silo_members($primary_silo, false);
-        $silo_members = array_diff($silo_members, [$target_id]); // exclude self
-
-        if ( empty($silo_members) ) {
-            wp_send_json_success(['suggestions' => [], 'message' => 'Aucun autre article dans ce silo.']);
-        }
-
-        // 3. Detect which members already link to target_id
-        $target_url     = get_permalink($target_id);
-        $target_slug    = get_post_field('post_name', $target_id);
-        $already_linked = [];
-
-        foreach ( $silo_members as $member_id ) {
-            $content = get_post_field('post_content', $member_id);
-            if ( ! $content ) continue;
-            // Check for link to target URL or slug
-            if ( strpos($content, $target_url) !== false || strpos($content, '/' . $target_slug . '/') !== false ) {
-                $already_linked[] = $member_id;
+        try {
+            $target_id = isset($_POST['post_id']) ? intval($_POST['post_id']) : 0;
+            if ( ! $target_id ) {
+                wp_send_json_error('ID manquant');
             }
-        }
 
-        $candidates = array_diff($silo_members, $already_linked);
+            global $wpdb;
+            $silos = $this->main->semantic_silos;
 
-        if ( empty($candidates) ) {
-            wp_send_json_success(['suggestions' => [], 'message' => 'Tous les articles du silo pointent déjà vers cet article. 🎉']);
-        }
+            // 1. Get target post's primary silo
+            $primary_silo = $silos->get_primary_silo($target_id);
+            if ( ! $primary_silo ) {
+                wp_send_json_error('Cet article n\'a pas encore été assigné à un silo sémantique. Recalculez les silos d\'abord.');
+            }
 
-        // 4. Load target embedding
-        $target_emb_raw = $wpdb->get_var($wpdb->prepare(
-            "SELECT embedding FROM {$wpdb->prefix}sil_embeddings WHERE post_id = %d",
-            $target_id
-        ));
+            // 2. Get all posts in the same silo (primary + bridges)
+            $silo_members = $silos->get_silo_members($primary_silo, false);
+            $silo_members = array_diff($silo_members, [$target_id]); // exclude self
 
-        if ( ! $target_emb_raw ) {
-            // No embedding: return candidates sorted by silo score only
+            if ( empty($silo_members) ) {
+                wp_send_json_success(['suggestions' => [], 'message' => 'Aucun autre article dans ce silo.']);
+            }
+
+            // 3. Detect which members already link to target_id
+            $target_url     = get_permalink($target_id);
+            $target_slug    = get_post_field('post_name', $target_id);
+            $already_linked = [];
+
+            foreach ( $silo_members as $member_id ) {
+                $content = get_post_field('post_content', $member_id);
+                if ( ! $content ) continue;
+                // Check for link to target URL or slug
+                if ( strpos($content, $target_url) !== false || strpos($content, '/' . $target_slug . '/') !== false ) {
+                    $already_linked[] = $member_id;
+                }
+            }
+
+            $candidates = array_diff($silo_members, $already_linked);
+
+            if ( empty($candidates) ) {
+                wp_send_json_success(['suggestions' => [], 'message' => 'Tous les articles du silo pointent déjà vers cet article. 🎉']);
+            }
+
+            // 4. Load target embedding
+            $target_emb_raw = $wpdb->get_var($wpdb->prepare(
+                "SELECT embedding FROM {$wpdb->prefix}sil_embeddings WHERE post_id = %d",
+                $target_id
+            ));
+
+            if ( ! $target_emb_raw ) {
+                // No embedding: return candidates sorted by silo score only
+                $suggestions = [];
+                foreach ( array_slice($candidates, 0, 10) as $cid ) {
+                    $memberships = $silos->get_memberships($cid);
+                    $suggestions[] = [
+                        'id'         => $cid,
+                        'title'      => get_the_title($cid),
+                        'edit_url'   => get_edit_post_link($cid),
+                        'similarity' => null,
+                        'silo_score' => $memberships[$primary_silo] ?? 0,
+                    ];
+                }
+                wp_send_json_success(['suggestions' => $suggestions, 'silo_id' => $primary_silo]);
+            }
+
+            $decoded_target = json_decode($target_emb_raw, true);
+            if ( ! is_array($decoded_target) ) {
+                wp_send_json_success(['suggestions' => [], 'message' => 'L\'analyse nécessite une regénération des tenseurs pour cet article.', 'silo_id' => $primary_silo]);
+            }
+            $target_vec = array_map('floatval', $decoded_target);
+
+            // 5. Score all candidates by cosine similarity
+            $scored = [];
+            $chunk_size = 50;
+            $candidate_chunks = array_chunk(array_values($candidates), $chunk_size);
+
+            foreach ( $candidate_chunks as $chunk ) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '%d'));
+                $rows = $wpdb->get_results($wpdb->prepare(
+                    "SELECT post_id, embedding FROM {$wpdb->prefix}sil_embeddings WHERE post_id IN ($placeholders)",
+                    ...$chunk
+                ));
+                foreach ( $rows as $row ) {
+                    $decoded_vec = json_decode($row->embedding, true);
+                    if ( ! is_array($decoded_vec) ) continue;
+                    $vec   = array_map('floatval', $decoded_vec);
+                    $sim   = $this->calculate_cosine_similarity($target_vec, $vec);
+                    $scored[(int) $row->post_id] = $sim;
+                }
+            }
+
+            // Posts without embeddings get score 0
+            foreach ( $candidates as $cid ) {
+                if ( ! isset($scored[$cid]) ) $scored[$cid] = 0.0;
+            }
+
+            arsort($scored);
+            $top = array_slice($scored, 0, 10, true);
+
+            // 6. Build result
             $suggestions = [];
-            foreach ( array_slice($candidates, 0, 10) as $cid ) {
+            foreach ( $top as $cid => $sim ) {
                 $memberships = $silos->get_memberships($cid);
                 $suggestions[] = [
                     'id'         => $cid,
                     'title'      => get_the_title($cid),
                     'edit_url'   => get_edit_post_link($cid),
-                    'similarity' => null,
-                    'silo_score' => $memberships[$primary_silo] ?? 0,
+                    'view_url'   => get_permalink($cid),
+                    'similarity' => round($sim * 100, 1),
+                    'silo_score' => round(($memberships[$primary_silo] ?? 0) * 100, 1),
+                    'is_bridge'  => isset($memberships[$primary_silo]) && count($memberships) > 1
+                                    && array_sum($memberships) - ($memberships[$primary_silo] ?? 0) >= 0.30,
                 ];
             }
-            wp_send_json_success(['suggestions' => $suggestions, 'silo_id' => $primary_silo]);
+
+            wp_send_json_success([
+                'suggestions' => $suggestions,
+                'silo_id'     => $primary_silo,
+                'silo_label'  => $silos->get_silo_labels()[$primary_silo] ?? 'Silo ' . $primary_silo,
+            ]);
+        } catch (Throwable $e) {
+            error_log("SIL Inlinks Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+            wp_send_json_error([
+                'message' => 'Erreur lors de la recherche de maillage : ' . $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+        }
+    }
+
+    /**
+     * AJAX: Get context for a specific link (edge) for the sidebar.
+     */
+    public function sil_get_edge_context() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Permission refusée');
         }
 
-        $target_vec = array_map('floatval', json_decode($target_emb_raw, true));
+        $source_id = isset($_POST['source_id']) ? intval($_POST['source_id']) : 0;
+        $target_id = isset($_POST['target_id']) ? intval($_POST['target_id']) : 0;
 
-        // 5. Score all candidates by cosine similarity
-        $scored = [];
-        $chunk_size = 50;
-        $candidate_chunks = array_chunk(array_values($candidates), $chunk_size);
+        if (!$source_id || !$target_id) {
+            wp_send_json_error('IDs manquants');
+        }
 
-        foreach ( $candidate_chunks as $chunk ) {
-            $placeholders = implode(',', array_fill(0, count($chunk), '%d'));
-            $rows = $wpdb->get_results($wpdb->prepare(
-                "SELECT post_id, embedding FROM {$wpdb->prefix}sil_embeddings WHERE post_id IN ($placeholders)",
-                ...$chunk
-            ));
-            foreach ( $rows as $row ) {
-                $vec   = array_map('floatval', json_decode($row->embedding, true));
-                $sim   = $this->calculate_cosine_similarity($target_vec, $vec);
-                $scored[(int) $row->post_id] = $sim;
+        $source_post = get_post($source_id);
+        $target_url = get_permalink($target_id);
+
+        if (!$source_post || !$target_url) {
+            wp_send_json_error('Source ou cible introuvable');
+        }
+
+        $content = $source_post->post_content;
+        $escaped_url = preg_quote($target_url, '/');
+        $relative_url = wp_make_link_relative($target_url);
+        $escaped_relative_url = preg_quote($relative_url, '/');
+
+        // Pattern to find the link, anchor, and attributes
+        $pattern = '/<a([^>]+)href=["\'](' . $escaped_url . '|' . $escaped_relative_url . ')["\']([^>]*)>(.*?)<\/a>/is';
+        
+        // Wait, the context extraction logic from sil_get_node_details is better
+        preg_match($pattern, $content, $matches, PREG_OFFSET_CAPTURE);
+
+        if (empty($matches)) {
+             wp_send_json_error('Lien non trouvé dans le contenu');
+        }
+
+        $full_tag = $matches[0][0];
+        $anchor = wp_strip_all_tags($matches[4][0]);
+        $offset = $matches[0][1];
+        $attr_before = $matches[1][0];
+        $attr_after = $matches[3][0];
+
+        $is_nofollow = (strpos($attr_before . $attr_after, 'nofollow') !== false);
+
+        // Capture context
+        $context_prev = strip_tags(substr($content, max(0, $offset - 100), min($offset, 100)));
+        $context_next = strip_tags(substr($content, $offset + strlen($full_tag), 100));
+
+        // Semantic leak detection & Permeability
+        $silos = $this->main->semantic_silos;
+        $s_silo = $silos->get_primary_silo($source_id);
+        $t_silo = $silos->get_primary_silo($target_id);
+        
+        $is_leak = ($s_silo !== $t_silo);
+        $silo_labels = $silos->get_silo_labels();
+        $leak_threshold = (int) get_option('sil_target_permeability', 20);
+        $leak_percent = 0;
+
+        if ($is_leak && $s_silo) {
+            global $wpdb;
+            $table_membership = $wpdb->prefix . 'sil_silo_membership';
+            $table_links = $wpdb->prefix . 'sil_links';
+            
+            // 1. Get all members of source silo
+            $silo_members = $silos->get_silo_members($s_silo, true);
+            if (!empty($silo_members)) {
+                $placeholders = implode(',', array_fill(0, count($silo_members), '%d'));
+                
+                // 2. Count total outgoing links from these members
+                $total_outgoing = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_links WHERE source_id IN ($placeholders)",
+                    ...$silo_members
+                ));
+
+                // 3. Count inter-silo links from these members
+                if ($total_outgoing > 0) {
+                    $inter_links = (int) $wpdb->get_var($wpdb->prepare(
+                        "SELECT COUNT(l.id) 
+                         FROM $table_links l
+                         JOIN $table_membership m ON l.target_id = m.post_id
+                         WHERE l.source_id IN ($placeholders) 
+                         AND m.silo_id != %d 
+                         AND m.is_primary = 1",
+                        ...array_merge($silo_members, [$s_silo])
+                    ));
+                    $leak_percent = round(($inter_links / $total_outgoing) * 100);
+                }
             }
-        }
-
-        // Posts without embeddings get score 0
-        foreach ( $candidates as $cid ) {
-            if ( ! isset($scored[$cid]) ) $scored[$cid] = 0.0;
-        }
-
-        arsort($scored);
-        $top = array_slice($scored, 0, 10, true);
-
-        // 6. Build result
-        $suggestions = [];
-        foreach ( $top as $cid => $sim ) {
-            $memberships = $silos->get_memberships($cid);
-            $suggestions[] = [
-                'id'         => $cid,
-                'title'      => get_the_title($cid),
-                'edit_url'   => get_edit_post_link($cid),
-                'view_url'   => get_permalink($cid),
-                'similarity' => round($sim * 100, 1),
-                'silo_score' => round(($memberships[$primary_silo] ?? 0) * 100, 1),
-                'is_bridge'  => isset($memberships[$primary_silo]) && count($memberships) > 1
-                                && array_sum($memberships) - ($memberships[$primary_silo] ?? 0) >= 0.30,
-            ];
         }
 
         wp_send_json_success([
-            'suggestions' => $suggestions,
-            'silo_id'     => $primary_silo,
-            'silo_label'  => $silos->get_silo_labels()[$primary_silo] ?? 'Silo ' . $primary_silo,
+            'anchor' => $anchor,
+            'context_prev' => '...' . $context_prev,
+            'context_next' => $context_next . '...',
+            'is_nofollow' => $is_nofollow,
+            'is_leak' => $is_leak,
+            'leak_percent' => $leak_percent,
+            'leak_threshold' => $leak_threshold,
+            'source_silo_id' => $s_silo,
+            'target_silo_id' => $t_silo,
+            'source_silo_label' => $silo_labels[$s_silo] ?? "Silo $s_silo",
+            'target_silo_label' => $silo_labels[$t_silo] ?? "Silo $t_silo",
+            'source_title' => get_the_title($source_id),
+            'target_title' => get_the_title($target_id),
+            'target_url' => $target_url,
+            'source_edit_url' => get_edit_post_link($source_id),
+            'target_edit_url' => get_edit_post_link($target_id)
         ]);
+    }
+
+    /**
+     * AJAX: Toggle nofollow attribute on a link.
+     */
+    public function sil_toggle_edge_nofollow() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Permission refusée');
+        }
+
+        $source_id = intval($_POST['source_id']);
+        $target_url = isset($_POST['target_url']) ? esc_url_raw($_POST['target_url']) : '';
+        $set_nofollow = $_POST['nofollow'] === 'true';
+
+        $source_post = get_post($source_id);
+        if (!$source_post || !$target_url) {
+            wp_send_json_error('Données invalides');
+        }
+
+        $content = $source_post->post_content;
+        $escaped_url = preg_quote($target_url, '/');
+        $relative_url = wp_make_link_relative($target_url);
+        $pattern = '/<a([^>]+)href=["\'](' . $escaped_url . '|' . preg_quote($relative_url, '/') . ')["\']([^>]*)>(.*?)<\/a>/is';
+
+        $new_content = preg_replace_callback($pattern, function($m) use ($set_nofollow) {
+            $attr = $m[1] . ' ' . $m[3];
+            $anchor = $m[4];
+            $url = $m[2];
+
+            // Clean up existing rel attribute carefully
+            $rel = '';
+            if (preg_match('/rel=["\']([^"\']*)["\']/i', $attr, $rel_matches)) {
+                $rel = $rel_matches[1];
+                $attr = str_replace($rel_matches[0], '', $attr);
+            }
+
+            $rel_parts = array_filter(explode(' ', $rel));
+            if ($set_nofollow) {
+                if (!in_array('nofollow', $rel_parts)) $rel_parts[] = 'nofollow';
+            } else {
+                $rel_parts = array_diff($rel_parts, ['nofollow']);
+            }
+
+            if (!empty($rel_parts)) {
+                $attr .= ' rel="' . esc_attr(implode(' ', $rel_parts)) . '"';
+            }
+
+            return sprintf('<a %s href="%s">%s</a>', trim($attr), $url, $anchor);
+        }, $content);
+
+        if ($new_content !== $content) {
+            wp_update_post(['ID' => $source_id, 'post_content' => $new_content]);
+            wp_send_json_success('Attribut mis à jour');
+        } else {
+            wp_send_json_error('Modification impossible');
+        }
     }
 }
 

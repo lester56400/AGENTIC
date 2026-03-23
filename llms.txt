@@ -1,0 +1,26 @@
+# Smart Internal Links (SIL)
+> Un outil SEO complet alliant puissance de calcul backend (Graphes & Embeddings) et analyse stratégique par IA (Le GEM).
+
+## Ecosysteme : Plugin ↔ GEM
+Ce projet n'est pas qu'un simple plugin WordPress. C'est un **écosystème en deux parties** :
+1. **Le Backend (PHP/JS) :** Calcule les embeddings OpenAI, la centralité (PageRank interne), la perméabilité des silos, et analyse les données Google Search Console (GSC). Il exporte ces données brutes sous forme de fichier JSON.
+2. **Le Consultant (Le GEM) :** Une IA configurée via les fichiers `Gem.md` (Prompt Master) et `deep.md` (Playbook SEO). L'utilisateur donne le JSON au GEM, qui agit comme un Consultant SEO Technique Senior pour fournir un plan d'action hiérarchisé (Le 80/20).
+
+## Core Files (Architecture IA)
+
+- **`Gem.md`** : Le centre de commande fonctionnel du GEM. Il définit le persona de l'IA, les règles de priorisation (Critique, Construction, Important, Chipotage), et la structure stricte du rapport en 4 tableaux (Orphelins, Fuites, CTR/Meta, Chantier d'autorité). C'est lui qui dicte le format de sortie "Titre Priority".
+- **`deep.md`** : Le "Playbook Sémantique". C'est la base de connaissances profonde de l'IA. Contrairement au Gem.md qui donne des ordres de formatage, `deep.md` explique *comment* réfléchir : règles de transfert du Link Juice, architecture des balises Hn (Cocon Sémantique), et centralité sémantique des clusters.
+- **`includes/class-sil-cluster-analysis.php`** : Le moteur PHP qui génère le JSON. Il calcule les barycentres vectoriels de chaque silo, détecte les "trous sémantiques" (`hollow_cluster`), les ponts manquants (`missing_bridge`), et mappe précisément les fuites entre articles (`leak_details`).
+
+## Flux de travail (Workflow)
+1. Le plugin analyse tous les posts, génère un graphe visuel et exporte le **JSON Audit**.
+2. L'utilisateur copie-colle le contenu du JSON dans son IA (configurée avec `Gem.md` + `deep.md`).
+3. Le GEM renvoie des recommandations chirurgicales (ex: *"Article A" fuit vers "Article B" - Désactivez le lien*).
+4. L'utilisateur retourne sur la Cartographie visuelle du plugin, recherche l'article, et utilise un des 5 boutons d'action IA implémentés dans le plugin (Créer un pont, Inventer lien, etc.) pour corriger le problème.
+
+## Concepts Clés de l'Analyse (Fournis dans le JSON)
+- `cluster_id` : L'ID du silo sémantique auquel appartient un article.
+- `sil_pagerank` : Score de puissance de la page, mixant la représentativité sémantique (embedding) et la puissance GSC (Impressions).
+- `cluster_permeability` : Si trop élevé (fuite de jus hors silo), le GEM exigera une correction.
+- `leak_details` : Mappage précis Source → Cible des liens qui brisent l'étanchéité d'un silo.
+- `semantic_gaps` : Liste des manques thématiques déduits de l'absence de certains mots-clés dans un silo. Sert au GEM pour rédiger le plan "Architecte".
