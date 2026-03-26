@@ -1,39 +1,43 @@
-# Plan : Anti-Cannibalisation Sémantique par Embeddings
+# Implementation Plan: Gutenberg Safety & Fuzzy Adoption
 
-L'objectif est d'ajouter une intelligence "pré-export" au plugin pour décider si un mot-clé manquant (opportunité) doit faire l'objet d'un nouvel article ou d'une mise à jour d'un article existant, en se basant sur la similarité vectorielle (embeddings).
+Ce plan vise à corriger les erreurs de validation de blocs Gutenberg et à implémenter l'Option C (Ancre Sémantique Floue) pour une insertion plus naturelle.
 
-## Architecture Technique
+## User Review Required
 
-### 1. Collecte des opportunités
-- Dans `get_graph_data()`, APRÈS la détection des `hollow_clusters` et des `true_gaps`.
-- Lister toutes les opportunités textuelles (sujets suggérés).
+> [!WARNING]
+> **Sécurité Gutenberg** : L'utilisation actuelle de `wp_kses_post()` sur le contenu renvoyé par l'IA supprime les commentaires HTML de Gutenberg (`<!-- wp:paragraph -->`), ce qui cause l'erreur "Contenu invalide". Nous allons passer à une méthode de nettoyage qui préserve ces délimiteurs.
 
-### 2. Génération d'Embeddings (Batch)
-- Utiliser l'API OpenAI (`text-embedding-3-small`).
-- Envoyer toutes les opportunités en UNE SEULE requête pour minimiser la latence.
-- Récupérer les vecteurs.
+---
 
-### 3. Calcul de Similarité (Local PHP)
-- Pour chaque opportunité :
-    - Comparer son vecteur avec les embeddings des articles existants du silo (`_sil_embedding` déjà présent en base).
-    - Calculer la similarité Cosine (produit scalaire des vecteurs normalisés).
+## Proposed Changes
 
-### 4. Logique de Décision
-- **Si Similarité > 0.85** (ou seuil paramétrable) :
-    - Action : `RECOMMEND_UPDATE`
-    - Cible : ID de l'article le plus proche.
-    - Raison : "Sujet très proche de l'existant (Cannibalisation)".
-- **Si Similarité < 0.85** :
-    - Action : `RECOMMEND_CREATE`
-    - Raison : "Angle thématique distinct".
+### [Component] Backend: Semantic Bridge Logic
+#### [MODIFY] [includes/class-sil-ajax-handler.php](file:///c:/Users/leste/Documents/GitHub/AGENTIC/includes/class-sil-ajax-handler.php)
 
-### 5. Export JSON
-- Injecter ces décisions dans la clé `opportunities` du fichier `sil-audit-data.json`.
+**1. Debug Gutenberg Corruption:**
+- Dans `sil_apply_anchor_context`, remplacer `wp_kses_post()` par `wp_kses()` avec une configuration autorisant les commentaires HTML, ou utiliser `force_balance_tags()` si on fait confiance au flux IA.
+- S'assurer que le `original_text` envoyé au front-end ne tronque pas les balises Gutenberg.
 
-## Changements de fichiers
-- `includes/class-sil-cluster-analysis.php` : Cœur de la logique de calcul.
-- `includes/class-sil-openai-client.php` (ou équivalent) : Ajout de la méthode batch embedding.
+**2. Implement Option C (Fuzzy Anchor):**
+- Modifier `sil_generate_bridge_prompt` :
+    - Changer le prompt pour demander à l'IA de scanner le paragraphe et d'identifier la meilleure portion de texte existante à transformer en lien.
+    - Supprimer l'obligation d'utiliser l'ancre littérale si une meilleure opportunité sémantique existe dans le texte.
+- Mettre à jour l'objet de retour pour inclure des instructions claires sur la flexibilité de l'ancre.
 
-## Plan de vérification
-- Vérifier que le JSON contient bien les nouveaux champs `{action: "UPDATE", target_id: 123...}`.
-- Tester avec des sujets volontairement proches pour valider le déclenchement du `UPDATE`.
+### [Component] Frontend: Bridge Manager
+#### [MODIFY] [assets/sil-bridge-manager.js](file:///c:/Users/leste/Documents/GitHub/AGENTIC/assets/sil-bridge-manager.js)
+- Mettre à jour les labels de la modale pour refléter le mode "Fuzzy" (ex: "L'IA va adapter le texte existant").
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Exécuter `lint_runner.py` pour valider les changements PHP/JS.
+- Vérifier la préservation des commentaires HTML via un script de test unitaire simple.
+
+### Manual Verification
+1. Créer un article avec l'éditeur Gutenberg.
+2. Lancer un Pont Sémantique sur un paragraphe.
+3. Sauvegarder et vérifier si l'éditeur affiche l'erreur "Contenu invalide".
+4. Vérifier que le lien a été inséré sur un texte existant (Fuzzy) plutôt que d'être "forcé".

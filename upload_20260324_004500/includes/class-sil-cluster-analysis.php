@@ -796,33 +796,6 @@ class SIL_Cluster_Analysis {
     }
 
 
-    /**
-     * Identifie le Mégaphone (Pivot) pour un post donné.
-     * @param int $post_id
-     * @return int|null ID du post Mégaphone ou null.
-     */
-    public function get_megaphone_for_post($post_id) {
-        $graph_data = $this->get_graph_data();
-        $cluster_id = null;
-        
-        foreach ($graph_data['nodes'] as $node) {
-            if (isset($node['data']['id']) && (string)$node['data']['id'] === (string)$post_id) {
-                $cluster_id = $node['data']['cluster_id'] ?? null;
-                break;
-            }
-        }
-
-        if (!$cluster_id) return null;
-
-        foreach ($graph_data['nodes'] as $node) {
-            if (isset($node['data']['cluster_id']) && (string)$node['data']['cluster_id'] === (string)$cluster_id && (($node['data']['is_pivot'] ?? false) === true || ($node['data']['is_pivot'] ?? false) === 'true')) {
-                return (int)$node['data']['id'];
-            }
-        }
-
-        return null;
-    }
-
     private function get_edges($posts) {
         global $wpdb;
         $edges = array();

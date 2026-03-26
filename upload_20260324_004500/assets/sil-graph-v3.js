@@ -415,7 +415,7 @@ jQuery(document).ready(function ($) {
             const $content = $('#sil-sidebar-content');
 
             // Show sidebar and loading state
-            $sidebar.css('display', 'flex');
+            $sidebar.show();
             $content.html('<div style="padding:40px; text-align:center;"><div class="spinner is-active" style="float:none; margin:0 auto 20px;"></div><p style="color:#64748b; font-size:13px;">Analyse s\u00e9mantique en cours...</p></div>');
 
             $.post(silGraphData.ajaxurl || ajaxurl, {
@@ -733,7 +733,7 @@ jQuery(document).ready(function ($) {
             const $sidebar = $('#sil-graph-sidebar');
             const $content = $('#sil-sidebar-content');
 
-            $sidebar.css('display', 'flex');
+            $sidebar.show();
             $content.html('<div style="padding:60px 40px; text-align:center;" class="sil-staggered sil-staggered-1"><div class="spinner is-active" style="float:none; margin:0 auto 24px; width:30px; height:30px;"></div><p class="sil-premium-header" style="color:#64748b; font-size:14px; letter-spacing:0.02em;">Analyse du contexte en cours...</p></div>');
             // Calculate proximity based on distance
             const sourceNode = cy.getElementById(sourceId);
@@ -1159,21 +1159,91 @@ jQuery(document).ready(function ($) {
 
         $(document).on('click', '.sil-local-bridge-btn', function () {
             const $btn = $(this);
-            const sourceId = $btn.data('source');
-            const targetId = $btn.data('target');
-            const anchorText = $btn.data('anchor');
-            
-            if (window.SIL_Bridge) {
-                window.SIL_Bridge.generate(sourceId, targetId, anchorText, $btn);
-            } else {
-                console.error('SIL_Bridge not found');
-            }
+            $btn.prop('disabled', true).text('⏳ Calcul sémantique...');
+
+            $.post(silGraphData.ajaxurl || ajaxurl, {
+                action: 'sil_generate_bridge_prompt',
+                nonce: silGraphData.nonce,
+                source_id: $btn.data('source'),
+                target_id: $btn.data('target'),
+                anchor_text: $btn.data('anchor')
+            }, function (response) {
+                $btn.prop('disabled', false).text('🌉 Créer un pont sémantique');
+                if (response.success) {
+                    if (typeof window.openBridgeModal === 'function') {
+                        window.openBridgeModal(response.data);
+                    }
+                } else {
+                    alert(response.data);
+                }
+            });
         });
 
-        $(document).on('sil_bridge_applied', function(e, sourceId, targetId) {
-            alert('Pont inséré avec succès ! (Actualisez le graphe pour voir la flèche)');
-            // Note: In the future, we could trigger a local node refresh here if cy is available
+        $(document).on('click', '#sil-ai-modal-close, #sil-ai-modal-cancel', function () {
+            $('#sil-ai-modal-overlay').remove();
         });
+
+        $(document).on('click', '#sil-ai-modal-confirm', function () {
+            const $btnModal = $(this);
+            $btnModal.prop('disabled', true).text('⏳ Enregistrement...');
+            $.post(silGraphData.ajaxurl || ajaxurl, {
+                action: 'sil_apply_anchor_context',
+                nonce: silGraphData.nonce,
+                source_id: $btnModal.data('source'),
+                target_id: $btnModal.data('target'),
+                original_text: $btnModal.data('original'),
+                final_text: $('#sil-ai-modal-editor').val()
+            }, function (response) {
+                if (response.success) {
+                    $('#sil-ai-modal-overlay').remove();
+                    $('.sil-inline-error').remove();
+                    alert('Pont inséré avec succès ! (Actualisez le graphe pour voir la flèche)');
+                } else {
+                    alert(response.data);
+                    $btnModal.prop('disabled', false).text('Sauvegarder l\'insertion');
+                }
+            });
+        });
+
+    /**
+     * Ouvre la modale de création de pont sémantique (Workflow IA).
+     * Accessible globalement pour être appelée depuis le Dashboard (admin.js).
+     */
+    window.openBridgeModal = function(data) {
+        const promptText = data.prompt;
+        const modalHtml = `
+        <div id="sil-ai-modal-overlay">
+            <div class="sil-modal-container">
+                <div class="sil-modal-header">
+                    <h3>
+                        <span style="background:var(--sil-primary);color:#fff;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;">🤖</span>
+                        Workflow IA : Pont Sémantique Direct
+                    </h3>
+                    <button id="sil-ai-modal-close" class="sil-modal-close-btn">&times;</button>
+                </div>
+                <div class="sil-modal-body">
+                    <div class="sil-modal-column alt-bg">
+                        <label class="sil-modal-label">1. Copiez le Prompt</label>
+                        <p class="sil-modal-desc">Utilisez ce contexte structuré dans Gemini ou ChatGPT pour générer un paragraphe d'insertion fluide.</p>
+                        <textarea id="sil-prompt-text" class="sil-modal-textarea" readonly>${promptText}</textarea>
+                        <button class="button button-secondary" style="margin-top:16px;width:100%;" onclick="const t=document.getElementById('sil-prompt-text');t.select();document.execCommand('copy');this.innerText='✅ Copié !';setTimeout(()=>this.innerText='📋 Copier le prompt',2000);">
+                            📋 Copier le prompt
+                        </button>
+                    </div>
+                    <div class="sil-modal-column">
+                        <label class="sil-modal-label">2. Collez le résultat HTML</label>
+                        <p class="sil-modal-desc">L'IA doit vous retourner un paragraphe contenant le lien <code>&lt;a href="..."&gt;</code>.</p>
+                        <textarea id="sil-ai-modal-editor" class="sil-modal-textarea editor" placeholder="Collez ici le paragraphe généré..."></textarea>
+                    </div>
+                </div>
+                <div class="sil-modal-footer">
+                    <button id="sil-ai-modal-cancel" class="button">Annuler</button>
+                    <button id="sil-ai-modal-confirm" class="button button-primary" data-source="${data.source_id}" data-target="${data.target_id}" data-original="${data.original}">🚀 Sauvegarder l'insertion</button>
+                </div>
+            </div>
+        </div>`;
+        $('body').append(modalHtml);
+    };
     // End of Document event handlers
 
     function handleGraphError(msg) {

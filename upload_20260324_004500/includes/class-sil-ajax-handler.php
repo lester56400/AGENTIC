@@ -49,8 +49,6 @@ class SIL_Ajax_Handler
         add_action( 'wp_ajax_sil_run_deep_unit_tests', [ $handler, 'sil_run_deep_unit_tests' ] );
         add_action( 'wp_ajax_sil_get_edge_context', [ $handler, 'sil_get_edge_context' ] );
         add_action( 'wp_ajax_sil_toggle_edge_nofollow', [ $handler, 'sil_toggle_edge_nofollow' ] );
-        add_action( 'wp_ajax_sil_get_orphan_adoption_info', [ $handler, 'sil_get_orphan_adoption_info' ] );
-        add_action( 'wp_ajax_sil_adopt_orphan', [ $handler, 'sil_adopt_orphan' ] );
     }
 
     /**
@@ -978,56 +976,33 @@ class SIL_Ajax_Handler
             $best_index = count($matches[0]) - 1;
         }
 
-        // 4. Extraction du contexte Chirurgicale
-        $target_html = $matches[0][$best_index][0];
-        
-        $context_before = "";
-        if ($best_index > 0) {
-            $prev_pos = $matches[0][$best_index - 1][1];
-            $context_before = substr($content, $prev_pos, $matches[0][$best_index][1] - $prev_pos);
-        }
+        // 4. Extraction du contexte (L'environnement HTML exact du paragraphe ciblé)
+        $start_index = max(0, $best_index - 1);
+        $end_index = min(count($matches[0]) - 1, $best_index + 1);
 
-        $context_after = "";
-        if ($best_index < count($matches[0]) - 1) {
-            $next_match = $matches[0][$best_index + 1];
-            $curr_end = $matches[0][$best_index][1] + strlen($target_html);
-            $context_after = substr($content, $curr_end, ($next_match[1] + strlen($next_match[0])) - $curr_end);
-        }
+        $start_pos = $matches[0][$start_index][1];
+        $end_pos = $matches[0][$end_index][1] + strlen($matches[0][$end_index][0]);
+
+        $full_context_html = substr($content, $start_pos, $end_pos - $start_pos);
 
         // 5. Construction du Prompt Ultime (100% Dynamique)
         $ai_instructions = get_option('sil_openai_bridge_prompt');
         
         // Fallback minimal de sécurité si le champ est vide
         if (empty(trim($ai_instructions))) {
-            $ai_instructions = "Tu es un expert SEO et rédacteur web français de haut niveau. Mission : Insérer un lien interne de façon indétectable.\n\n" .
-                               "RÈGLES D'OR :\n" .
-                               "1. GRAMMAIRE : Respecte strictement la syntaxe française. N'oublie jamais les articles (le, la, l', de, du, à, au). La phrase doit être parfaitement naturelle et fluide.\n" .
-                               "2. ANRE FLOUE : Ne force pas l'ancre littérale. Identifie le meilleur concept existant dans le paragraphe et transforme-le en lien.\n" .
-                               "3. INTÉGRITÉ HTML : Renvoie UNIQUEMENT le bloc HTML complet du paragraphe ciblé. NE PAS INCLURE DE COMMENTAIRES HTML (<!-- wp:... -->). Ne simplifie pas le code, ne supprime aucune balise existante. Toute balise ouverte doit être fermée.\n" .
-                               "4. DISCRÉTION : Le lecteur ne doit pas se rendre compte qu'un lien a été ajouté a posteriori.";
+            $ai_instructions = "Insère ce lien naturellement et donne 3 propositions avec le code HTML.";
         }
         
         $link_html = "<a href='" . esc_url($target_url) . "'>" . esc_html($anchor_text) . "</a>";
 
         $final_prompt = "Voici une mission d'optimisation de maillage interne.\n\n";
-        $final_prompt .= "🎯 SUJET CIBLE : \"" . get_the_title($target_id) . "\"\n";
-        $final_prompt .= "🔗 LIEN (à utiliser tel quel ou adapter l'ancre si besoin métaphorique) : `" . $link_html . "`\n\n";
-        
-        if (!empty($context_before)) {
-            $final_prompt .= "📖 CONTEXTE PRÉCÉDENT (Ne pas modifier) :\n" . wp_strip_all_tags($context_before) . "\n\n";
-        }
-        
-        $final_prompt .= "✏️ PARAGRAPHE À RÉÉCRIRE (HTML) :\n" . $target_html . "\n\n";
-        
-        if (!empty($context_after)) {
-            $final_prompt .= "📖 CONTEXTE SUIVANT (Ne pas modifier) :\n" . wp_strip_all_tags($context_after) . "\n\n";
-        }
-
-        $final_prompt .= "📝 INSTRUCTIONS :\n" . $ai_instructions;
+        $final_prompt .= "🎯 LIEN À INSÉRER EXACTEMENT :\n`" . $link_html . "`\n\n";
+        $final_prompt .= "🔍 TEXTE SOURCE (HTML) :\n" . $full_context_html . "\n\n";
+        $final_prompt .= "📝 INSTRUCTIONS ET RÈGLES DE RÉDACTION :\n" . $ai_instructions;
 
         wp_send_json_success([
             'prompt' => $final_prompt,
-            'original' => $target_html, // On ne renvoie QUE le paragraphe cible pour un remplacement chirurgical
+            'original' => $full_context_html, // On renvoie bien le bloc complet pour le str_replace final
             'source_id' => $source_id,
             'target_id' => $target_id
         ]);
@@ -1045,72 +1020,13 @@ class SIL_Ajax_Handler
         $post_id = intval($_POST['source_id']);
         $target_id = intval($_POST['target_id']);
         $original_text = wp_unslash($_POST['original_text']);
-        $final_text = wp_unslash($_POST['final_text']);
-
-        // Validation HTML Syntax (Orchestration Quality)
-        if (!empty($final_text)) {
-            $dom = new DOMDocument();
-            libxml_use_internal_errors(true);
-            // On enveloppe pour le support UTF-8 et éviter les warnings sur les fragments sans doctype
-            $html_wrapper = '<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>' . $final_text . '</body></html>';
-            $dom->loadHTML($html_wrapper, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-            $errors = libxml_get_errors();
-            libxml_clear_errors();
-            
-            if (!empty($errors)) {
-                $err_details = "";
-                foreach ($errors as $error) { $err_details .= trim($error->message) . " "; }
-                wp_send_json_error("Syntaxe HTML invalide renvoyée par l'IA : " . $err_details);
-                return;
-            }
-
-            // Vérification de sécurité minimale : présence du lien
-            if (strpos($final_text, '<a') === false) {
-                wp_send_json_error("Le texte renvoyé par l'IA ne contient plus le lien HTML <a>.");
-                return;
-            }
-        }
-
-        // Gutenberg Safety: wp_kses_post strips HTML comments (<!-- wp:paragraph -->). 
-        // If the user has unfiltered_html capability, we trust the final_text to preserve them.
-        if (!current_user_can('unfiltered_html')) {
-            $final_text = wp_kses_post($final_text);
-        }
+        $final_text = wp_kses_post(wp_unslash($_POST['final_text']));
 
         $post = get_post($post_id);
-        $haystack = $post->post_content;
-        $needle = $original_text;
+        $new_content = str_replace($original_text, $final_text, $post->post_content);
 
-        // Surgical replacement (Limit 1 to avoid replacing multiple identical paragraphs)
-        $pos = strpos($haystack, $needle);
-        if ($pos !== false) {
-            $new_content = substr_replace($haystack, $final_text, $pos, strlen($needle));
-        } else {
-             $new_content = str_replace($needle, $final_text, $haystack);
-        }
-
-        // Fallback robust matching (in case of entity divergence like &rsquo; vs ')
-        if ($new_content === $haystack) {
-            $needle_decoded = html_entity_decode($needle, ENT_QUOTES, 'UTF-8');
-            $haystack_decoded = html_entity_decode($haystack, ENT_QUOTES, 'UTF-8');
-            
-            $pos = mb_strpos($haystack_decoded, $needle_decoded, 0, 'UTF-8');
-            if ($pos !== false) {
-                // Regex attempt: allows multiple variations of common entities (quotes, apostrophes, ampersands)
-                $quoted_needle = preg_quote($needle_decoded, '/');
-                $regex_needle = str_replace(
-                    ["'", '"', '&'], 
-                    ["(?:'|&rsquo;|&apos;|&#039;)", '(?:"|&quot;|&#034;)', '(?:&|&amp;)'], 
-                    $quoted_needle
-                );
-                
-                // Primary surgical regex
-                $new_content = preg_replace('/' . $regex_needle . '/us', $final_text, $haystack, 1);
-            }
-        }
-
-        if ($new_content === $haystack) {
-            wp_send_json_error('Le paragraphe original n\'a pas pu être localisé dans le contenu (possible divergence de formatage ou entités HTML). Le lien n\'a pas été inséré.');
+        if ($new_content === $post->post_content) {
+            wp_send_json_error('Le paragraphe original n\'a pas pu être localisé (possible divergence HTML). Le lien n\'a pas été inséré.');
             return;
         }
 
@@ -2132,108 +2048,6 @@ class SIL_Ajax_Handler
         } else {
             wp_send_json_error('Modification impossible');
         }
-    }
-
-    /**
-     * AJAX: Get info for orphan adoption.
-     */
-    public function sil_get_orphan_adoption_info() {
-        check_ajax_referer('sil_nonce', 'nonce');
-        if (!current_user_can('edit_posts')) wp_send_json_error('Permission refusée');
-
-        $post_id = intval($_POST['post_id']);
-        if (!$post_id) wp_send_json_error('ID manquant');
-
-        $cluster_analysis = new SIL_Cluster_Analysis();
-        $megaphone_id = $cluster_analysis->get_megaphone_for_post($post_id);
-
-        if (!$megaphone_id) {
-            wp_send_json_error('Aucun Mégaphone trouvé pour ce silo.');
-        }
-
-        $orphan_title    = wp_kses_decode_entities(get_the_title($post_id));
-        $megaphone_title = wp_kses_decode_entities(get_the_title($megaphone_id));
-
-        // --- Anchors Suggestions ---
-        $anchors = [];
-        $anchors[] = $orphan_title; // Option 1: Title
-
-        // Option 2: GSC Top Query
-        $gsc_data = get_post_meta($post_id, '_sil_gsc_data', true);
-        if ($gsc_data) {
-            $gsc = is_array($gsc_data) ? $gsc_data : json_decode($gsc_data, true);
-            if (empty($gsc) && is_string($gsc_data)) {
-                 $gsc = function_exists('maybe_unserialize') ? maybe_unserialize($gsc_data) : unserialize($gsc_data);
-            }
-            $queries = $gsc['top_queries'] ?? (is_array($gsc) ? $gsc : []);
-            if (!empty($queries) && is_array($queries)) {
-                $first = reset($queries);
-                $kw = $first['query'] ?? ($first['keys'][0] ?? '');
-                if ($kw) $anchors[] = $kw;
-            }
-        }
-
-        // Option 3: AI Suggestion
-        $api_key = get_option('sil_openai_api_key');
-        if ($api_key) {
-            $prompt = "Suggère une ancre de lien naturelle et SEO (maximum 4 mots) pour un lien menant vers l'article intitulé : \"$orphan_title\". Le lien sera inséré dans un article sur la thématique sémantique similaire. Répond uniquement par l'ancre, rien d'autre.";
-            
-            $response = wp_remote_post('https://api.openai.com/v1/chat/completions', [
-                'timeout' => 15,
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $api_key,
-                    'Content-Type'  => 'application/json'
-                ],
-                'body' => json_encode([
-                    'model' => 'gpt-4o-mini',
-                    'messages' => [['role' => 'user', 'content' => $prompt]],
-                    'temperature' => 0.7
-                ])
-            ]);
-
-            if (!is_wp_error($response)) {
-                $body = json_decode(wp_remote_retrieve_body($response), true);
-                $ai_anchor = $body['choices'][0]['message']['content'] ?? '';
-                if ($ai_anchor) $anchors[] = trim($ai_anchor, '" ');
-            }
-        }
-
-        wp_send_json_success([
-            'megaphone_id' => $megaphone_id,
-            'megaphone_title' => $megaphone_title,
-            'anchors' => array_values(array_unique(array_map('wp_kses_decode_entities', array_filter($anchors))))
-        ]);
-    }
-
-    /**
-     * AJAX: Actually adopt the orphan (insert link).
-     */
-    public function sil_adopt_orphan() {
-        check_ajax_referer('sil_nonce', 'nonce');
-        if (!current_user_can('edit_posts')) wp_send_json_error('Permission refusée');
-
-        $orphan_id = intval($_POST['orphan_id']);
-        $megaphone_id = intval($_POST['megaphone_id']);
-        $anchor = sanitize_text_field($_POST['anchor']);
-
-        if (!$orphan_id || !$megaphone_id || !$anchor) {
-            wp_send_json_error('Données manquantes');
-        }
-
-        $target_url = get_permalink($orphan_id);
-        
-        // Mimic the structure expected by sil_insert_internal_link
-        $_POST['post_id'] = $orphan_id;
-        $_POST['links'] = json_encode([
-            [
-                'target_id' => $megaphone_id,
-                'target_url' => $target_url,
-                'anchor' => $anchor,
-                'paragraph_index' => -1
-            ]
-        ]);
-
-        return $this->sil_insert_internal_link();
     }
 }
 
