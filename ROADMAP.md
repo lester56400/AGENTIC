@@ -1,16 +1,49 @@
 # Roadmap - Smart Internal Links
 
+---
+
+## 🚨 BMAD — Inversion Logique "Booster" (Cible vs Source)
+
+> **Priorité : Haute — À traiter en premier**
+
+**Objectif :** Faire en sorte que l'article sélectionné dans la colonne "Striking Distance" devienne la **CIBLE** du lien. La modale de recherche sert alors à trouver une **SOURCE** (Mégaphone) pour lui envoyer de l'autorité.
+
+### Tâche 1 — Inversion de l'ouverture de la modale (JS)
+- [ ] **Fichier :** `assets/admin.js`
+- [ ] Trouver l'écouteur de clic sur `.sil-booster-btn` dans `renderGapTable`.
+- [ ] Modifier l'appel à `openBridgeModal` : passer l'ID de l'article en **2ème argument** (Target) et `null` en 1er (Source).
+  ```js
+  // Avant : openBridgeModal(articleId, null, keyword)
+  // Après : openBridgeModal(null, articleId, keyword)
+  ```
+
+### Tâche 2 — Adaptation de l'interface de la modale (JS)
+- [ ] **Fichier :** `assets/sil-bridge-manager.js`
+- [ ] Modifier `openBridgeModal(sourceId, targetId, anchor)`.
+- [ ] Ajouter une condition **"Mode Booster"** (`sourceId === null && targetId !== null`).
+- [ ] Adapter dynamiquement :
+  - Titre de la modale → `"🚀 Booster l'article"`
+  - Label de recherche → `"Étape 1 : Chercher un article SOURCE (Mégaphone)"`
+- [ ] Stocker le `targetId` fixe et orienter la recherche vers des sources potentielles.
+
+### Tâche 3 — Support du sens inverse (PHP)
+- [ ] **Fichier :** `includes/class-sil-ajax-handler.php`
+- [ ] Vérifier que `sil_search_posts_for_link` retourne bien les **impressions GSC** pour chaque article.
+- [ ] S'assurer que les résultats permettent d'identifier visuellement les **Mégaphones** (sources fortes) dans la modale.
+
+---
+
 ## À faire pour demain (2026-03-20)
 
 ### 1. Filtrage du Graphe
-- [ ] **Exclure les articles `noindex` du graphe** : Modifier la récupération des données du graphe (`class-sil-cluster-analysis.php`) pour ne pas inclure les nœuds dont le meta SEO est réglé sur `noindex`.
+- [x] **Exclure les articles `noindex` du graphe** : Modifier la récupération des données du graphe (`class-sil-cluster-analysis.php`) pour ne pas inclure les nœuds dont le meta SEO est réglé sur `noindex`.
 
 ### 2. Création de Pont Sémantique
-- [ ] **Révision du bouton d'insertion** : Vérifier les contrastes de couleurs dans la modale de création de pont. Le bouton de validation semble être "bleu sur bleu".
-- [ ] **Correction de l'affichage de la modale** : Résoudre le problème de défilement. Lorsqu'on crée un pont en bas de la modale, l'affichage se fait en dessous de la zone visible, forçant l'utilisation de l'ascenseur.
+- [x] **Révision du bouton d'insertion** : Vérifier les contrastes de couleurs dans la modale de création de pont. Le bouton de validation semble être "bleu sur bleu".
+- [x] **Correction de l'affichage de la modale** : Résoudre le problème de défilement. Lorsqu'on crée un pont en bas de la modale, l'affichage se fait en dessous de la zone visible, forçant l'utilisation de l'ascenseur.
 
 ### 3. Recommandations de Silotage
-- [ ] **Nommage des silos dans les recommandations** : Remplacer l'affichage type "Silo 9001" par un nom plus explicite comme "Thématique : [Nom du Pivot]" ou le titre de l'article pivot du silo.
+- [x] **Nommage des silos dans les recommandations** : Remplacer l'affichage type "Silo 9001" par un nom plus explicite comme "Thématique : [Nom du Pivot]" ou le titre de l'article pivot du silo.
 
 ### 4. Suggestions de Metas SEO
 - [ ] **Édition des suggestions** : Permettre la réécriture manuelle des metas (Title/Description) après la suggestion de l'IA, ou la validation directe en l'état.
@@ -22,17 +55,17 @@
 *Choisissez parmi ces points pour moderniser l'interface et améliorer l'expérience utilisateur.*
 
 ### 🎨 1. Refactorisation de l'Architecture CSS
-- [ ] **Suppression des styles "inline"** : Déplacer tous les styles injectés via JS vers des classes CSS dédiées dans `admin.css`.
-- [ ] **Design Tokens (Thématisation)** : Unifier l'utilisation des variables `--sil-primary` et remplacer les couleurs codées en dur par des jetons cohérents.
+- [x] **Suppression des styles "inline"** : Déplacer tous les styles injectés via JS vers des classes CSS dédiées dans `admin.css`.
+- [x] **Design Tokens (Thématisation)** : Unifier l'utilisation des variables `--sil-primary` et remplacer les couleurs codées en dur par des jetons cohérents.
 
 ### ✨ 2. Icônographie "Premium" (Remplacement des Emojis)
-- [ ] **Remplacement des Emojis par des SVG** : Remplacer les emojis (👾, 🚩, 🧼, 🥇, 🥈, ⚠️) par un set d'icônes SVG professionnel (ex: **Lucide** ou **Heroicons**).
-- [ ] **Indices visuels de statut** : Utiliser des icônes d'alerte uniformes pour les "Intruders", "Orphans" et "Siphons".
+- [x] **Remplacement des Emojis par des SVG** : Remplacer les emojis (👾, 🚩, 🧼, 🥇, 🥈, ⚠️) par un set d'icônes SVG professionnel (ex: **Lucide** ou **Heroicons**).
+- [x] **Indices visuels de statut** : Utiliser des icônes d'alerte uniformes pour les "Intruders", "Orphans" et "Siphons".
 
 ### 🧠 3. Fluidité des Interactions (Micro-interactions)
-- [ ] **Feedback sans interruption** : Remplacer les `alert()` par un système de **Toasts/Notifications**.
-- [ ] **Transitions de chargement** : Améliorer les états de chargement (skeletons ou spinners personnalisés).
-- [ ] **Animations de volet** : Assurer que le panneau latéral s'ouvre avec une animation de glissement "smooth".
+- [x] **Feedback sans interruption** : Remplacer les `alert()` par un système de **Toasts/Notifications**.
+- [x] **Transitions de chargement** : Améliorer les états de chargement (skeletons ou spinners personnalisés).
+- [x] **Animations de volet** : Assurer que le panneau latéral s'ouvre avec une animation de glissement "smooth".
 
 ### 📊 4. Ergonomie du Graphe (Cytoscape)
 - [ ] **Typographie "Tech/SEO"** : Adopter la police **Fira Sans** pour le corps et **Fira Code** pour les données techniques.
@@ -44,8 +77,10 @@
 
 *Fonctionnalités avancées pour transformer SIL en plateforme d'autorité SEO complète.*
 
-### 🏛️ Option A : Générateur de Pages Piliers & Silotage Automatique
-- [ ] **Détection de "L'Optimal K"** : Calculer mathématiquement le nombre idéal de silos (via Elbow Method ou Silhouette) pour que le maillage soit le plus naturel possible.
+### 🏛️ Option A : Générateur de Pages Piliers & Stratégie Éditoriale Actionnable
+- [ ] **Le "Business Case" du Contenu (ROI Sémantique)** : Expliquer *pourquoi* écrire (Défense de silo, Potentiel GSC, Correction de dette sémantique) pour justifier l'effort de rédaction. [Option C]
+- [ ] **Le "Contrat de Liaison" (Maillage Prédictif)** : Désigner la source (Mégaphone) et l'ancre (Exacte/Naturelle) *avant* la rédaction pour garantir le transfert de jus immédiat. [Option B]
+- [ ] **Futur : Analyse d'Intention LLM** : Faire évoluer le Gem.md pour déduire l'angle (Comparatif, FAQ, Guide) via l'analyse des requêtes GSC (Post-v2.6). [Option A]
 - [ ] **Détection de "Silo Master"** : Identifier automatiquement quand un silo sémantique a besoin d'une page centrale de référence.
 - [ ] **Génération IA d'Articles-Piliers** : Création d'un article "Guide Complet" qui résume chaque article du silo et distribue le jus SEO de manière hiérarchique.
 - [ ] **Maillage Réciproque (Hub & Spoke)** : Forcer ou suggérer un lien de l'article vers sa page Pilier pour sceller l'autorité thématique du silo.

@@ -1,0 +1,1323 @@
+/* Smart Internal Links - Modern Admin Styles */
+
+/* Variables */
+:root {
+    --sil-primary: #4f46e5;
+    --sil-primary-dark: #4338ca;
+    --sil-success: #10b981;
+    --sil-warning: #f59e0b;
+    --sil-danger: #ef4444;
+    --sil-gray-50: #f9fafb;
+    --sil-gray-100: #f3f4f6;
+    --sil-gray-200: #e5e7eb;
+    --sil-gray-300: #d1d5db;
+    --sil-gray-500: #6b7280;
+    --sil-gray-700: #374151;
+    --sil-gray-900: #111827;
+}
+
+/* Header */
+.sil-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--sil-gray-200);
+}
+
+.sil-header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--sil-gray-900);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+#sil-refresh-graph {
+    margin-left: 10px;
+}
+
+/* Visualization Page */
+.sil-visualization-page {
+    display: flex;
+    flex-direction: column;
+}
+
+.sil-visualization-page .sil-graph-wrapper {
+    position: relative;
+    width: 100%;
+    height: 700px;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    border-radius: 0 0 8px 8px;
+    /* Rounded bottom only */
+    border-top: none;
+    overflow: hidden;
+    order: 2;
+    /* Force order */
+}
+
+.sil-graph-controls-toolbar {
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px 8px 0 0;
+    /* Rounded top only */
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 0;
+    /* Connected to graph */
+    order: -1 !important;
+    /* Forces toolbar to top */
+    z-index: 10;
+}
+
+/* Tooltip Multiline */
+#sil-graph-tooltip {
+    max-width: 300px !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+    line-height: 1.4 !important;
+    text-align: left !important;
+    z-index: 10000 !important;
+    /* Ensure on top */
+}
+
+.sil-graph-controls {
+    display: flex;
+    gap: 5px;
+}
+
+.sil-graph-legend {
+    position: absolute;
+    bottom: 15px;
+    left: 15px;
+    z-index: 10;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    pointer-events: none;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.sil-graph-legend div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+/* Silo Labels & Halos */
+.sil-silo-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    pointer-events: none;
+    user-select: none;
+}
+
+.sil-silo-halo {
+    transition: opacity 0.3s ease;
+}
+
+.sil-silo-halo:hover {
+    opacity: 0.15 !important;
+}
+
+/* Side Panel */
+/* Side Panel */
+.sil-side-panel {
+    position: absolute;
+    top: 0;
+    right: -320px;
+    width: 300px;
+    height: 100%;
+    background: #fff;
+    border-left: 1px solid #cbd5e1;
+    box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+    transition: right 0.3s ease;
+    z-index: 99999 !important;
+    /* Max z-index */
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    /* Added padding */
+    box-sizing: border-box;
+    /* Include padding in width */
+    transform: none !important;
+    overflow-y: auto;
+    /* Allow scrolling if content is too tall */
+}
+
+.sil-side-panel.open {
+    right: 0 !important;
+    transform: none !important;
+}
+
+.sil-panel-close {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #64748b;
+    padding: 5px;
+    line-height: 1;
+}
+
+.sil-panel-close:hover {
+    color: #ef4444;
+}
+
+#sil-panel-title {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    font-size: 18px;
+    line-height: 1.4;
+    color: #1e293b;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 15px;
+}
+
+.sil-panel-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.sil-stat-item {
+    background: #f8fafc;
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid #e2e8f0;
+}
+
+.sil-stat-val {
+    display: block;
+    font-size: 24px;
+    font-weight: 700;
+    color: #3b82f6;
+    margin-bottom: 4px;
+}
+
+.sil-stat-label {
+    font-size: 12px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sil-panel-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: auto;
+    /* Push to bottom if needed, or just regular margin */
+    padding-top: 20px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.sil-panel-actions .button {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+}
+
+.sil-header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* Tabs */
+.sil-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--sil-gray-200);
+}
+
+.sil-tab-btn {
+    padding: 10px 20px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--sil-gray-500);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sil-tab-btn:hover {
+    color: var(--sil-primary);
+}
+
+.sil-tab-btn.active {
+    color: var(--sil-primary);
+    border-bottom-color: var(--sil-primary);
+}
+
+/* Stats Cards */
+.sil-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.sil-stat-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--sil-gray-200);
+}
+
+.sil-stat-card .stat-label {
+    font-size: 13px;
+    color: var(--sil-gray-500);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sil-stat-card .stat-value {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--sil-gray-900);
+}
+
+.sil-stat-card.primary .stat-value {
+    color: var(--sil-primary);
+}
+
+/* Graph Container */
+#sil-graph-container {
+    width: 100%;
+    height: 600px;
+    background: #f8fafc;
+    border: 1px solid var(--sil-gray-200);
+    border-radius: 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+
+.sil-stat-card.success .stat-value {
+    color: var(--sil-success);
+}
+
+.sil-stat-card.warning .stat-value {
+    color: var(--sil-warning);
+}
+
+/* Section Cards */
+.sil-card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--sil-gray-200);
+    margin-bottom: 24px;
+    overflow: hidden;
+}
+
+.sil-card-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--sil-gray-200);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--sil-gray-50);
+}
+
+.sil-card-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--sil-gray-900);
+}
+
+.sil-card-body {
+    padding: 20px;
+}
+
+/* Graph Container */
+#sil-graph-container {
+    position: relative;
+    border-radius: 0 0 12px 12px;
+    width: 100%;
+    height: 600px;
+    background: #f8fafc;
+    border: 1px solid var(--sil-gray-200);
+    border-top: none;
+}
+
+.sil-graph-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--sil-gray-500);
+    font-weight: 500;
+}
+
+/* SVG Graph */
+.sil-node-group {
+    transition: all 0.2s ease;
+}
+
+.sil-node-group:hover circle {
+    stroke-width: 2px;
+    filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.2));
+}
+
+.sil-node-group:hover text {
+    font-weight: 700;
+    fill: var(--sil-gray-900);
+}
+
+/* Buttons */
+.sil-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    text-decoration: none;
+}
+
+.sil-btn-primary {
+    background: var(--sil-primary);
+    color: #fff;
+}
+
+.sil-btn-primary:hover {
+    background: var(--sil-primary-dark);
+    color: #fff;
+}
+
+.sil-btn-secondary {
+    background: var(--sil-gray-100);
+    color: var(--sil-gray-700);
+    border: 1px solid var(--sil-gray-300);
+}
+
+.sil-btn-secondary:hover {
+    background: var(--sil-gray-200);
+    color: var(--sil-gray-700);
+}
+
+.sil-btn-success {
+    background: var(--sil-success);
+    color: #fff;
+}
+
+.sil-btn-danger {
+    background: var(--sil-danger);
+    color: #fff;
+}
+
+.sil-btn-danger:hover {
+    background: #dc2626;
+    color: #fff;
+}
+
+.sil-btn-accent {
+    background: #8b5cf6;
+    color: #fff;
+}
+
+.sil-btn-accent:hover {
+    background: #7c3aed;
+    color: #fff;
+}
+
+.sil-btn-sm {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.sil-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Filters */
+.sil-filters {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.sil-filter-btn {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    background: var(--sil-gray-100);
+    color: var(--sil-gray-700);
+    border: 1px solid var(--sil-gray-200);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sil-filter-btn:hover {
+    background: var(--sil-gray-200);
+}
+
+.sil-filter-btn.active {
+    background: var(--sil-primary);
+    color: #fff;
+    border-color: var(--sil-primary);
+}
+
+.sil-filter-btn[data-filter="orphan"].active {
+    background: var(--sil-danger);
+    border-color: var(--sil-danger);
+}
+
+.sil-filter-count {
+    margin-left: 8px;
+    color: var(--sil-gray-500);
+    font-size: 13px;
+}
+
+/* Table */
+.sil-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.sil-table th {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sil-gray-500);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--sil-gray-50);
+    border-bottom: 1px solid var(--sil-gray-200);
+}
+
+.sil-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--sil-gray-100);
+    vertical-align: middle;
+}
+
+.sil-table tbody tr:hover {
+    background: var(--sil-gray-50);
+}
+
+.sil-table .check-column {
+    width: 40px;
+    padding: 12px;
+}
+
+.sil-article-title {
+    font-weight: 500;
+    color: var(--sil-gray-900);
+    margin-bottom: 4px;
+}
+
+.sil-article-meta {
+    font-size: 12px;
+    color: var(--sil-gray-500);
+}
+
+.sil-article-meta a {
+    color: var(--sil-primary);
+    text-decoration: none;
+}
+
+.sil-article-meta a:hover {
+    text-decoration: underline;
+}
+
+/* Badges */
+.sil-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sil-badge-danger {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+.sil-badge-warning {
+    background: #fffbeb;
+    color: #d97706;
+}
+
+.sil-badge-success {
+    background: #ecfdf5;
+    color: #059669;
+}
+
+.sil-badge-neutral {
+    background: var(--sil-gray-100);
+    color: var(--sil-gray-600);
+}
+
+.sil-no-match-icon {
+    color: var(--sil-warning);
+    margin-left: 6px;
+}
+
+/* Preview Row */
+.sil-preview-row {
+    background: var(--sil-gray-50) !important;
+}
+
+.sil-preview-row td {
+    padding: 0 !important;
+}
+
+.sil-preview-content {
+    padding: 16px 20px;
+}
+
+.sil-preview-box {
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid var(--sil-gray-200);
+}
+
+.sil-preview-title {
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--sil-gray-900);
+}
+
+.sil-link-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--sil-gray-50);
+    border-radius: 6px;
+    border: 1px solid var(--sil-gray-200);
+}
+
+.sil-link-item:last-child {
+    margin-bottom: 0;
+}
+
+.sil-link-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+
+.sil-link-item label {
+    flex: 1;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.sil-link-item .sil-link-target {
+    font-weight: 500;
+    color: var(--sil-gray-900);
+}
+
+.sil-link-item .sil-link-anchor {
+    color: var(--sil-primary);
+    font-style: italic;
+}
+
+.sil-link-item .sil-link-score {
+    font-size: 12px;
+    color: var(--sil-gray-500);
+    background: var(--sil-gray-200);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.sil-preview-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+}
+
+/* Success/Error states */
+.sil-success-box {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+}
+
+.sil-error-box {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #dc2626;
+}
+
+.sil-warning-box {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+}
+
+/* Row states */
+.sil-row-done {
+    opacity: 0.6;
+}
+
+.sil-row-done .sil-article-title::after {
+    content: " ✓";
+    color: var(--sil-success);
+}
+
+/* Progress */
+.sil-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--sil-gray-50);
+    border-radius: 8px;
+    margin-top: 12px;
+}
+
+.sil-progress .spinner {
+    float: none;
+    margin: 0;
+}
+
+.sil-progress-text {
+    font-size: 14px;
+    color: var(--sil-gray-700);
+}
+
+/* Pagination */
+.sil-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 16px;
+    border-top: 1px solid var(--sil-gray-200);
+}
+
+.sil-pagination a,
+.sil-pagination span {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    text-decoration: none;
+}
+
+.sil-pagination a {
+    color: var(--sil-gray-700);
+    background: var(--sil-gray-100);
+}
+
+.sil-pagination a:hover {
+    background: var(--sil-gray-200);
+}
+
+.sil-pagination .current {
+    background: var(--sil-primary);
+    color: #fff;
+}
+
+.sil-pagination-info {
+    color: var(--sil-gray-500);
+    font-size: 13px;
+    margin-right: 12px;
+}
+
+/* Mass actions */
+.sil-mass-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+/* Credits */
+.sil-credits {
+    text-align: center;
+    padding: 16px;
+    color: var(--sil-gray-500);
+    font-size: 13px;
+}
+
+.sil-credits a {
+    color: var(--sil-primary);
+    text-decoration: none;
+}
+
+/* Settings Page */
+.sil-settings-table {
+    background: #fff;
+    border-radius: 8px;
+}
+
+.sil-settings-table th {
+    width: 200px;
+    padding: 16px 20px;
+    font-weight: 500;
+}
+
+.sil-settings-table td {
+    padding: 16px 20px;
+}
+
+.sil-settings-table input[type="text"],
+.sil-settings-table input[type="password"],
+.sil-settings-table input[type="number"],
+.sil-settings-table select {
+    padding: 8px 12px;
+    border: 1px solid var(--sil-gray-300);
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.sil-settings-table .description {
+    margin-top: 6px;
+    color: var(--sil-gray-500);
+    font-size: 13px;
+}
+
+/* Actions cell */
+.sil-actions {
+    display: flex;
+    gap: 6px;
+}
+
+/* Animation */
+@keyframes sil-fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.sil-preview-row td {
+    animation: sil-fadeIn 0.2s ease;
+}
+
+/* Responsive */
+@media (max-width: 782px) {
+    .sil-stats-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .sil-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .sil-filters {
+        flex-wrap: wrap;
+    }
+}
+
+/* --- REVAMPED GRAPH UI --- */
+
+/* Full Screen Mode */
+body.sil-fullscreen-mode {
+    overflow: hidden;
+    /* Prevent scrolling on body */
+}
+
+#sil-graph-wrapper {
+    position: relative;
+    width: 100%;
+    height: 600px;
+    background: #f8fafc;
+    border: 1px solid var(--sil-gray-200);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+#sil-graph-wrapper.fixed-fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 99999;
+    border-radius: 0;
+    border: none;
+}
+
+/* Graph Controls (Floating) */
+.sil-graph-controls {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    display: flex;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(4px);
+    padding: 8px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    border: 1px solid var(--sil-gray-200);
+    z-index: 10;
+}
+
+.sil-control-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border: 1px solid var(--sil-gray-200);
+    border-radius: 6px;
+    color: var(--sil-gray-700);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 16px;
+}
+
+.sil-control-btn:hover {
+    background: var(--sil-gray-50);
+    color: var(--sil-primary);
+    border-color: var(--sil-primary);
+}
+
+/* Side Panel (Details) */
+.sil-side-panel {
+    position: absolute;
+    top: 0;
+    right: -400px;
+    /* Hidden by default */
+    width: 350px;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    border-left: 1px solid var(--sil-gray-200);
+    box-shadow: -4px 0 15px rgba(0, 0, 0, 0.05);
+    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+}
+
+.sil-side-panel.open {
+    right: 0;
+}
+
+.sil-panel-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--sil-gray-200);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.sil-panel-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--sil-gray-900);
+    margin: 0;
+    line-height: 1.4;
+}
+
+.sil-panel-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: var(--sil-gray-400);
+    cursor: pointer;
+    padding: 0;
+    margin-left: 10px;
+    line-height: 1;
+}
+
+.sil-panel-close:hover {
+    color: var(--sil-danger);
+}
+
+.sil-panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.sil-panel-section {
+    margin-bottom: 24px;
+}
+
+.sil-panel-section h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    color: var(--sil-gray-500);
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--sil-gray-100);
+    padding-bottom: 4px;
+}
+
+.sil-panel-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.sil-panel-stat-item {
+    background: var(--sil-gray-50);
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.sil-panel-stat-value {
+    display: block;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--sil-primary);
+}
+
+.sil-panel-stat-label {
+    font-size: 12px;
+    color: var(--sil-gray-500);
+}
+
+.sil-panel-actions {
+    padding: 20px;
+    border-top: 1px solid var(--sil-gray-200);
+    background: var(--sil-gray-50);
+}
+
+/* Graph Container Override */
+#sil-graph-container {
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 0;
+    background: radial-gradient(circle at center, #ffffff 0%, #f1f5f9 100%);
+    /* Subtle gradient */
+}
+
+/* Reciprocal Linking / Silo Sealing */
+.sil-reciprocity-block {
+    margin-top: 15px;
+    padding: 12px;
+    background: #fff7ed;
+    border: 1px solid #ffedd5;
+    border-radius: 8px;
+    border-left: 4px solid #f97316;
+}
+
+.sil-reciprocity-block h5 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    color: #9a3412;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sil-reciprocity-block p {
+    font-size: 11px;
+    color: #c2410c;
+    margin: 0 0 10px 0;
+    line-height: 1.4;
+}
+
+.sil-seal-btn {
+    width: 100%;
+    background: #f97316 !important;
+    border-color: #ea580c !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    font-size: 12px !important;
+    height: 32px !important;
+    line-height: 30px !important;
+    cursor: pointer;
+}
+
+.sil-seal-btn:hover {
+    background: #ea580c !important;
+}
+
+.sil-silo-health-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.sil-silo-health-perfect { background: #d1fae5; color: #065f46; }
+.sil-silo-health-warning { background: #ffedd5; color: #9a3412; }
+.sil-silo-health-danger { background: #fee2e2; color: #991b1b; }
+
+/* Modal System (Workflow IA) */
+#sil-ai-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.75);
+    z-index: 999999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(12px);
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.sil-modal-container {
+    background: #fff;
+    width: 100%;
+    max-width: 1100px;
+    border-radius: 16px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: 95vh;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    animation: sil-modal-slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes sil-modal-slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.sil-modal-header {
+    padding: 20px 24px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.sil-modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #0f172a;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.sil-modal-close-btn {
+    background: #f1f5f9;
+    border: none;
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #64748b;
+    transition: all 0.2s;
+    font-size: 20px;
+}
+
+.sil-modal-close-btn:hover {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+.sil-modal-body {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    overflow-y: auto;
+    background: #fff;
+    flex: 1;
+}
+
+.sil-modal-column {
+    flex: 1;
+    min-width: 350px;
+    padding: 30px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+
+.sil-modal-column.alt-bg {
+    background: #f8fafc;
+    border-right: 1px solid #f1f5f9;
+}
+
+.sil-modal-label {
+    font-weight: 700;
+    display: block;
+    margin-bottom: 8px;
+    color: #1e293b;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sil-modal-desc {
+    font-size: 12px;
+    color: #64748b;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.sil-modal-textarea {
+    width: 100%;
+    height: 300px;
+    flex: 1;
+    padding: 16px;
+    font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+    font-size: 12px;
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    resize: none;
+    border-radius: 10px;
+    box-sizing: border-box;
+    color: #334155;
+    line-height: 1.6;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.sil-modal-textarea:focus {
+    border-color: var(--sil-primary);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    outline: none;
+}
+
+.sil-modal-textarea.editor {
+    border: 2px solid var(--sil-primary);
+    background: #f0f9ff;
+    color: #0c4a6e;
+}
+
+.sil-modal-footer {
+    padding: 16px 30px;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.sil-modal-footer .button {
+    height: 40px;
+    padding: 0 24px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+/* Fix width issues */
+@media (max-width: 768px) {
+    .sil-modal-column {
+        min-width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #f1f5f9;
+    }
+}
+
+/* --- ORPHAN ADOPTION MODAL (2026 PREMIUM) --- */
+.sil-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(8px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100000;
+}
+
+.sil-modal-content {
+    background: #fff;
+    width: 100%;
+    max-width: 500px;
+    border-radius: 20px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
+}
+
+.sil-modal-header {
+    padding: 24px 28px;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.sil-modal-header h3 { margin: 0; font-size: 19px; font-weight: 700; color: #0f172a; }
+
+.sil-modal-body { padding: 28px; }
+
+.sil-megaphone-card {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border: 1px solid #bbf7d0;
+    border-radius: 16px;
+    padding: 20px;
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    margin-bottom: 28px;
+}
+
+.sil-megaphone-card .card-icon { font-size: 28px; background: #fff; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+
+.sil-megaphone-card .card-label { display: block; font-size: 10px; text-transform: uppercase; color: #166534; font-weight: 800; margin-bottom: 4px; }
+
+.sil-megaphone-card .card-title { font-size: 15px; font-weight: 700; color: #14532d; line-height: 1.4; }
+
+.anchor-options { display: flex; flex-direction: column; gap: 12px; }
+
+.anchor-option { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
+
+.anchor-option:hover { border-color: var(--sil-primary); background: #f8fafc; }
+
+.anchor-option .anchor-text { flex: 1; font-size: 14px; color: #334155; }
+
+.anchor-option .anchor-badge { font-size: 9px; font-weight: 700; background: #f1f5f9; color: #64748b; padding: 3px 8px; border-radius: 6px; text-transform: uppercase; }
+
+.anchor-option.custom input[type="text"] { width: 100%; border: none; background: transparent; padding: 0; font-size: 14px; outline: none; }
+
+.sil-modal-footer { padding: 20px 28px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 14px; }

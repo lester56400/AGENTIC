@@ -924,7 +924,7 @@ endif;
 					<div id="gap-consolidation" style="padding:10px; min-height:150px;"></div>
 				</div>
 				<div style="flex:1; background:#fff; border:1px solid #ccd0d4; border-radius:5px;">
-					<div style="padding:10px; background:#f0f0f1; border-bottom:1px solid #ccd0d4; font-weight:bold;">🕳️ Opportunités (Position > 40)</div>
+					<div style="padding:10px; background:#f0f0f1; border-bottom:1px solid #ccd0d4; font-weight:bold;">🕳️ True Gaps (Pos > 40)</div>
 					<div id="gap-true" style="padding:10px; min-height:150px;"></div>
 				</div>
 			</div>

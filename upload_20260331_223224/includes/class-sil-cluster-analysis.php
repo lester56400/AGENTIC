@@ -444,24 +444,11 @@ class SIL_Cluster_Analysis {
                     }, $raw_q);
                     $q = wp_specialchars_decode($q, ENT_QUOTES);
 
-                    // Normalisation pour le regroupement (minuscules + sans accents)
-                    $q_norm = function_exists('remove_accents') ? strtolower(remove_accents($q)) : strtolower($q);
-
-                    if (!isset($all_queries[$q_norm])) {
-                        $all_queries[$q_norm] = [
-                            'query' => $q, // On garde l'originale pour l'affichage
-                            'impressions' => 0,
-                            'position' => 100,
-                            'pids' => []
-                        ];
-                    }
-
-                    $all_queries[$q_norm]['impressions'] += intval($r['impressions'] ?? 0);
-                    $all_queries[$q_norm]['position'] = min($all_queries[$q_norm]['position'], floatval($r['position'] ?? 100));
-                    
-                    if (!in_array($pid, $all_queries[$q_norm]['pids'])) {
-                        $all_queries[$q_norm]['pids'][] = $pid;
-                    }
+                    $all_queries[$q] = [
+                        'query' => $q,
+                        'impressions' => ($all_queries[$q]['impressions'] ?? 0) + intval($r['impressions'] ?? 0),
+                        'position' => min($all_queries[$q]['position'] ?? 100, floatval($r['position'] ?? 100))
+                    ];
                 }
             }
         }

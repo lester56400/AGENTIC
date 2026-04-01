@@ -1,6 +1,5 @@
 jQuery(document).ready(function ($) {
     let cy = null;
-    let rawGraphData = null;
     const $container = $('#sil-graph-container');
     const vibrantColors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#14b8a6'];
 
@@ -34,7 +33,6 @@ jQuery(document).ready(function ($) {
             force_refresh: 'true'
         }, function(response) {
             if (response.success) {
-                rawGraphData = response.data;
                 processGraphData(response.data);
             } else {
                 handleGraphError(response.data);
@@ -76,11 +74,10 @@ jQuery(document).ready(function ($) {
                 export_date: new Date().toISOString(),
                 node_count: cy.nodes('[^is_silo_parent]').length,
                 edge_count: cy.edges().length,
-                sil_version: "2.5",
-                features: ["sil_pagerank", "permeability", "semantic_collision", "opportunities", "decay_critical"]
+                sil_version: "2.0",
+                features: ["sil_pagerank", "permeability", "semantic_collision"]
             },
-            elements: cy.elements().map(el => el.data()),
-            opportunities: (rawGraphData && rawGraphData.opportunities) ? rawGraphData.opportunities : {}
+            elements: cy.elements().map(el => el.data())
         };
 
         const blob = new Blob([JSON.stringify(graphData, null, 2)], {type: 'application/json'});
@@ -107,7 +104,6 @@ jQuery(document).ready(function ($) {
             nonce: silSharedData.nonce
         }, function(response) {
             if (response.success) {
-                rawGraphData = response.data;
                 updateStatus(75, '\u00c9tape 2/3 : Analyse', 'Calcul des silos s\u00e9mantiques\u2026');
                 setTimeout(() => {
                     updateStatus(100, '\u00c9tape 3/3 : Rendu', 'G\u00e9n\u00e9ration de la carte\u2026');
