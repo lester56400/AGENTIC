@@ -21,6 +21,18 @@ class Sil_Gsc_Handler
     }
 
     /**
+     * Normalize the property URL for Google Search Console.
+     * Special case: sc-domain properties MUST NOT have a trailing slash.
+     */
+    private function normalize_property_url($url) {
+        $url = trim($url);
+        if (strpos($url, 'sc-domain:') !== 0) {
+            $url = trailingslashit($url);
+        }
+        return $url;
+    }
+
+    /**
      * Generate the OAuth authorization URL.
      */
     public function get_auth_url()
@@ -151,6 +163,7 @@ class Sil_Gsc_Handler
     public function query_search_analytics($site_url, $request_body)
     {
         $access_token = $this->get_valid_access_token();
+        $site_url = $this->normalize_property_url($site_url);
         $url = self::API_BASE_URL . urlencode($site_url) . '/searchAnalytics/query';
 
         $response = wp_remote_post($url, [
@@ -188,6 +201,7 @@ class Sil_Gsc_Handler
     public function inspect_url($site_url, $inspection_url)
     {
         $access_token = $this->get_valid_access_token();
+        $site_url = $this->normalize_property_url($site_url);
         $url = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect';
 
         $request_body = [

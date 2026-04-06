@@ -43,50 +43,98 @@ class SIL_Pilot_Engine {
      * Get orphans prioritizing high impressions contents (GSC data).
      */
     public function get_high_potential_orphans($limit = 5) {
+        // BMAD Correction: Increase resources for safety, though query is now fast
+        @set_time_limit(300);
+        @ini_set('memory_limit', '512M');
+
+        // HYBRID SYNC (Option C): Refresh stale content in background
+        $this->refresh_stale_content_links(10); 
+
         global $wpdb;
         $post_types = $this->main->post_types;
+        $table_links = $wpdb->prefix . 'sil_links';
+        $table_gsc   = $wpdb->prefix . 'sil_gsc_data';
 
         // 1. Exclude front/blog
         $exclude_ids = array_filter([(int)get_option('page_on_front'), (int)get_option('page_for_posts')]);
         $exclude_sql = !empty($exclude_ids) ? "AND p.ID NOT IN (" . implode(',', $exclude_ids) . ")" : "";
 
-        // 2. Fetch candidate posts (more than needed to allow filtering)
-        $candidates_to_fetch = max(100, $limit * 20);
+        // 2. Optimized JOIN Query: Find published posts with ZERO incoming links in sil_links
+        // We also join with sil_gsc_data to get impressions directly.
+        $candidates_to_fetch = max(100, $limit * 10);
         $results = $wpdb->get_results(
-            "SELECT p.ID, p.post_title FROM $wpdb->posts p
+            "SELECT p.ID, p.post_title, IFNULL(g.impressions, 0) as impressions
+             FROM $wpdb->posts p
+             LEFT JOIN $table_links l ON p.ID = l.target_id AND l.status = 'valid'
+             LEFT JOIN $table_gsc g ON p.ID = g.post_id
              WHERE p.post_type IN ('" . implode("','", array_map('esc_sql', $post_types)) . "') 
              AND p.post_status = 'publish' 
              $exclude_sql
-             ORDER BY p.ID DESC
+             AND l.target_id IS NULL
+             ORDER BY impressions DESC, p.ID DESC
              LIMIT $candidates_to_fetch"
-        );
+         );
+
+        if (empty($results)) return [];
 
         $orphans = [];
         foreach ($results as $post) {
-            // Noindex filter
+            // Noindex filter (Still check metadata for noindex as it's not in the main query)
             if ($this->is_noindexed($post->ID)) continue;
 
-            // Real orphan check: use SAME logic as Cartographie (scan real HTML content)
-            $real_backlinks = $this->main->count_backlinks($post->ID);
-            if ($real_backlinks > 0) continue; // Has real incoming links → not an orphan
-
-            $gsc_data = get_post_meta($post->ID, '_sil_gsc_data', true);
-            if (is_string($gsc_data)) {
-                $gsc_data = json_decode($gsc_data, true);
-            }
-            $impressions = isset($gsc_data['stats']['impressions']) ? (int)$gsc_data['stats']['impressions'] : 0;
             $orphans[] = [
-                'id' => $post->ID,
+                'id' => (int)$post->ID,
                 'title' => $post->post_title,
-                'impressions' => $impressions
+                'impressions' => (int)$post->impressions
             ];
 
-            // Early exit if we have enough
-            if (count($orphans) >= $limit * 3) break;
+            if (count($orphans) >= $limit) break;
         }
 
-        usort($orphans, function($a, $b) { return $b['impressions'] - $a['impressions']; });
-        return array_slice($orphans, 0, $limit);
+        return $orphans;
+    }
+
+    /**
+     * HYBRID SYNC: Scans a small batch of posts that have changed since last scan.
+     * Compares MD5 of post_content with stored hash in sil_embeddings.
+     */
+    public function refresh_stale_content_links($batch_size = 10) {
+        global $wpdb;
+        $table_embeddings = $wpdb->prefix . 'sil_embeddings';
+        $post_types = $this->main->post_types;
+        $types_sql = "'" . implode("','", array_map('esc_sql', $post_types)) . "'";
+
+        // Find posts where content has changed (hash mismatch)
+        // We join with embeddings to get the previous hash
+        $stale_posts = $wpdb->get_results("
+            SELECT p.ID, p.post_content, e.content_hash as old_hash
+            FROM $wpdb->posts p
+            INNER JOIN $table_embeddings e ON p.ID = e.post_id
+            WHERE p.post_type IN ($types_sql) 
+            AND p.post_status = 'publish'
+            LIMIT 50
+        ");
+
+        if (empty($stale_posts)) return;
+
+        $processed = 0;
+        foreach ($stale_posts as $post) {
+            $new_hash = md5($post->post_content);
+            if ($new_hash !== $post->old_hash) {
+                // Content changed! Update links for this post.
+                $this->main->scanner->scan_post_links($post->ID);
+                
+                // Update hash in embeddings table to avoid re-scanning
+                $wpdb->update(
+                    $table_embeddings,
+                    ['content_hash' => $new_hash],
+                    ['post_id' => $post->ID]
+                );
+
+                $processed++;
+                if ($processed >= $batch_size) break;
+            }
+        }
     }
 
     /**
@@ -95,14 +143,20 @@ class SIL_Pilot_Engine {
      */
     public function get_gsc_boosters($limit = 5) {
         global $wpdb;
-        $metas = $wpdb->get_results("SELECT post_id, meta_value FROM $wpdb->postmeta WHERE meta_key='_sil_gsc_data' AND meta_value != '' LIMIT 200");
+
+        // Optimized query: get GSC data and Title in one go, filtering by status directly in SQL
+        $metas = $wpdb->get_results("
+            SELECT pm.post_id, pm.meta_value, p.post_title, p.post_status 
+            FROM $wpdb->postmeta pm
+            INNER JOIN $wpdb->posts p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_sil_gsc_data' 
+            AND pm.meta_value != ''
+            AND p.post_status = 'publish'
+            LIMIT 200
+        ");
+        
         $boosters = [];
-
         foreach ($metas as $m) {
-            // Skip posts that are no longer published (trashed, drafted, or 301'd)
-            $post_status = get_post_status($m->post_id);
-            if ($post_status !== 'publish') continue;
-
             $data = is_string($m->meta_value) ? json_decode($m->meta_value, true) : $m->meta_value;
             if (empty($data) || !isset($data['top_queries']) || !is_array($data['top_queries'])) continue;
 
@@ -112,7 +166,7 @@ class SIL_Pilot_Engine {
                 if ($pos >= 6 && $pos <= 15) {
                     $boosters[] = [
                         'post_id' => $m->post_id,
-                        'title' => get_the_title($m->post_id),
+                        'title' => $m->post_title,
                         'kw' => $this->decode_gsc_query($q['query']),
                         'pos' => round($pos, 1),
                         'impressions' => isset($q['impressions']) ? (int)$q['impressions'] : 0
@@ -162,7 +216,8 @@ class SIL_Pilot_Engine {
                 'sil_get_pilotage_actions' => has_action('wp_ajax_sil_get_pilotage_actions') ? '✅ Enregistré' : '❌ MANQUANT',
                 'sil_get_pilotage_diagnostics' => has_action('wp_ajax_sil_get_pilotage_diagnostics') ? '✅ Enregistré' : '❌ MANQUANT',
                 'sil_get_action_logs' => has_action('wp_ajax_sil_get_action_logs') ? '✅ Enregistré' : '❌ MANQUANT'
-            ]
+            ],
+            'recent_errors' => $this->get_recent_php_errors(10)
         ];
 
         // Test Orphan Query
@@ -188,5 +243,39 @@ class SIL_Pilot_Engine {
         error_log('SIL Pilot Diagnostic: Completed successfully');
 
         return $diagnosis;
+    }
+
+    /**
+     * Reads the last N lines of the PHP error log if possible.
+     */
+    private function get_recent_php_errors($count = 10) {
+        $log_file = WP_CONTENT_DIR . '/debug.log';
+        if (!file_exists($log_file) || !is_readable($log_file)) {
+            return ["Log inaccessible ou vide (WP_DEBUG_LOG doit être actif)."];
+        }
+
+        $lines = [];
+        $file = fopen($log_file, 'r');
+        if (!$file) return ["Impossible d'ouvrir le fichier de log."];
+
+        fseek($file, 0, SEEK_END);
+        $pos = ftell($file);
+        $buffer = "";
+        
+        while ($pos > 0 && count($lines) < $count) {
+            $pos--;
+            fseek($file, $pos);
+            $char = fgetc($file);
+            if ($char === "\n") {
+                if (trim($buffer)) $lines[] = trim($buffer);
+                $buffer = "";
+            } else {
+                $buffer = $char . $buffer;
+            }
+        }
+        if (trim($buffer)) $lines[] = trim($buffer);
+        fclose($file);
+
+        return array_reverse($lines);
     }
 }

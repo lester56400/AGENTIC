@@ -1,9 +1,9 @@
 /* Smart Internal Links - Modern Admin Styles */
 
-/* Variables */
+/* Variables V17 Artisanality */
 :root {
-    --sil-primary: #4f46e5;
-    --sil-primary-dark: #4338ca;
+    --sil-primary: #6366f1;
+    --sil-primary-dark: #4f46e5;
     --sil-success: #10b981;
     --sil-warning: #f59e0b;
     --sil-danger: #ef4444;
@@ -14,6 +14,18 @@
     --sil-gray-500: #6b7280;
     --sil-gray-700: #374151;
     --sil-gray-900: #111827;
+    
+    /* Typography Tokens */
+    --sil-font-main: 'Fira Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --sil-font-mono: 'Fira Code', monospace;
+
+    /* Luxury UI Tokens */
+    --sil-glass: rgba(255, 255, 255, 0.7);
+    --sil-glass-border: rgba(255, 255, 255, 0.3);
+}
+
+body, .sil-header h1, .sil-card-header h2, .sil-btn, .sil-badge, .sil-modal-container h3 {
+    font-family: var(--sil-font-main);
 }
 
 /* Header */
@@ -590,6 +602,153 @@
     margin-left: 6px;
 }
 
+/* Status & Utility Classes */
+.sil-status-pending { color: #f59e0b !important; font-weight: 600; }
+.sil-status-error { color: #dc2626 !important; font-weight: 600; }
+.sil-status-success { color: #059669 !important; font-weight: 600; }
+
+.sil-test-item {
+    padding: 10px;
+    background: #fff;
+    border-left: 4px solid var(--sil-gray-300);
+    font-size: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.sil-test-item.success { border-left-color: var(--sil-success); }
+.sil-test-item.error { border-left-color: var(--sil-danger); }
+
+/* Toast System (V17 Luxury) */
+#sil-toast-container {
+    position: fixed;
+    top: 40px;
+    right: 32px;
+    z-index: 1000000;
+    pointer-events: none;
+}
+.sil-toast {
+    background: #fff;
+    padding: 12px 20px;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+    margin-bottom: 12px;
+    border-left: 5px solid var(--sil-gray-300);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--sil-gray-900);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    pointer-events: auto;
+    transform: translateX(120%);
+    animation: sil-toast-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transition: all 0.3s ease;
+}
+.sil-toast.fade-out {
+    opacity: 0;
+    transform: translateY(-8px);
+}
+.sil-toast.success { border-left-color: var(--sil-success); }
+.sil-toast.error { border-left-color: var(--sil-danger); }
+.sil-toast.warning { border-left-color: var(--sil-warning); }
+.sil-toast.info { border-left-color: var(--sil-primary); }
+
+@keyframes sil-toast-in { to { transform: translateX(0); } }
+
+/* V17 Expert UI Elements */
+.sil-badge-cornerstone {
+    background: #fef3c7;
+    color: #d97706;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 10px;
+    border: 1px solid #fcd34d;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.sil-lhf-box {
+    margin-top: 15px;
+    padding: 12px;
+    background-color: #f0fdf4;
+    border: 1px solid #86efac;
+    border-radius: 8px;
+}
+.sil-lhf-btn {
+    width: 100%;
+    justify-content: center;
+    background: #16a34a !important;
+    border-color: #15803d !important;
+    color: #fff !important;
+    margin-top: 10px;
+}
+
+.sil-cannibal-box {
+    margin-top: 15px;
+    padding: 12px;
+    background-color: #fef2f2;
+    border: 1px solid #f87171;
+    border-radius: 8px;
+}
+
+/* Premium Sidebar & Cartography Styles (Migrated from JS) */
+#sil-graph-sidebar {
+    background: var(--sil-glass) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-left: 1px solid var(--sil-glass-border) !important;
+    box-shadow: -10px 0 40px rgba(0,0,0,0.06) !important;
+}
+
+.sil-premium-header { 
+    font-family: 'Outfit', sans-serif !important; 
+    font-weight: 700; 
+    letter-spacing: -0.02em; 
+}
+
+.sil-glass-card {
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s ease;
+}
+.sil-glass-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08); }
+
+.sil-staggered { 
+    opacity: 0; 
+    transform: translateY(12px); 
+    animation: sil-fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; 
+}
+.sil-staggered-1 { animation-delay: 0.1s; }
+.sil-staggered-2 { animation-delay: 0.2s; }
+.sil-staggered-3 { animation-delay: 0.3s; }
+.sil-staggered-4 { animation-delay: 0.4s; }
+
+@keyframes sil-fade-up { to { opacity: 1; transform: translateY(0); } }
+
+/* Leak Alerts */
+.sil-leak-alert { border-radius: 12px; padding: 14px; display: flex; gap: 12px; border: 1px solid transparent; }
+.sil-leak-safe { background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-color: #86efac; color: #166534; }
+.sil-leak-danger { background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%); border-color: #fecdd3; color: #9f1239; }
+
+.sil-action-btn { 
+    display: block; width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; 
+    background: #fff; color: #1e293b; font-weight: 600; text-align: center; cursor: pointer;
+    transition: all 0.2s ease; font-size: 12px; margin-bottom: 8px;
+}
+.sil-action-btn:hover { background: #f8fafc; border-color: #cbd5e1; transform: scale(1.02); }
+.sil-action-btn-danger { color: #dc2626; border-color: #fee2e2; }
+.sil-action-btn-danger:hover { background: #fef2f2; border-color: #fecdd3; }
+
 /* Preview Row */
 .sil-preview-row {
     background: var(--sil-gray-50) !important;
@@ -704,6 +863,51 @@
     border-radius: 8px;
     margin-top: 12px;
 }
+
+/* Utilities & Helpers */
+.sil-hidden { display: none !important; }
+.sil-text-right { text-align: right !important; }
+.sil-text-center { text-align: center !important; }
+.sil-text-muted { color: var(--sil-gray-500) !important; }
+.sil-text-success { color: var(--sil-success) !important; }
+.sil-text-danger { color: var(--sil-danger) !important; }
+.sil-w-full { width: 100% !important; }
+.sil-mt-2 { margin-top: 8px !important; }
+.sil-mt-4 { margin-top: 16px !important; }
+
+/* Pilot Center Popover */
+.sil-pilot-target-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4); z-index: 100009;
+    backdrop-filter: blur(4px);
+}
+.sil-pilot-target-popover {
+    position: fixed; top: 50%; left: 50%; 
+    transform: translate(-50%, -50%); z-index: 100010;
+    background: #fff; border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+    padding: 24px; width: 420px; max-width: 90vw;
+}
+.sil-popover-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.sil-popover-header h4 { margin: 0; font-size: 15px; color: var(--sil-gray-900); }
+.sil-popover-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--sil-gray-500); }
+.sil-popover-section { background: var(--sil-gray-50); border: 1px solid var(--sil-gray-200); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+.sil-popover-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--sil-gray-500); display: block; margin-bottom: 6px; }
+.sil-popover-value { font-size: 13px; font-weight: 600; color: var(--sil-gray-900); }
+.sil-popover-input { width: 100%; padding: 10px 12px; border: 1px solid var(--sil-gray-300); border-radius: 8px; font-size: 13px; box-sizing: border-box; }
+.sil-popover-results { max-height: 160px; overflow-y: auto; border: 1px solid var(--sil-gray-200); border-top: none; border-radius: 0 0 8px 8px; display: none; background: #fff; }
+.sil-popover-result-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--sil-gray-100); font-size: 12px; color: var(--sil-gray-700); transition: background 0.15s; }
+.sil-popover-result-item:hover { background: var(--sil-gray-50); }
+.sil-popover-target-info { display: none; background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+
+/* Bridge Modal Specifics */
+.sil-modal-v17-actions { display: flex; gap: 4px; }
+.sil-btn-v17 { padding: 4px 8px !important; line-height: 1 !important; height: auto !important; }
+.sil-v17-suggestions-tag { 
+    background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 4px 8px; 
+    font-size: 11px; color: #475569; cursor: pointer; transition: all 0.2s;
+}
+.sil-v17-suggestions-tag:hover { background: #e2e8f0; border-color: #cbd5e1; }
 
 .sil-progress .spinner {
     float: none;
@@ -1201,8 +1405,8 @@ body.sil-fullscreen-mode {
     height: 300px;
     flex: 1;
     padding: 16px;
-    font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
-    font-size: 12px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+    font-size: 13px;
     border: 1px solid #cbd5e1;
     background: #fff;
     resize: none;
@@ -1280,16 +1484,27 @@ body.sil-fullscreen-mode {
 
 .sil-modal-header {
     padding: 24px 28px;
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #1e293b;
+    border-bottom: 2px solid var(--sil-primary);
     display: flex;
     align-items: center;
     justify-content: space-between;
 }
 
-.sil-modal-header h3 { margin: 0; font-size: 19px; font-weight: 700; color: #0f172a; }
+.sil-modal-header h3 { margin: 0; font-size: 19px; font-weight: 700; color: #ffffff; }
 
-.sil-modal-body { padding: 28px; }
+.sil-modal-body { 
+    padding: 28px; 
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.sil-modal-body img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    margin: 10px 0;
+}
 
 .sil-megaphone-card {
     background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
@@ -1314,6 +1529,145 @@ body.sil-fullscreen-mode {
 
 .anchor-option:hover { border-color: var(--sil-primary); background: #f8fafc; }
 
+/* --- V17 ARSENAL MODAL (UNIFICATION) --- */
+.sil-v17-modal-header-icon {
+    background: var(--sil-primary);
+    color: #fff;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+}
+
+.sil-v17-modal-subheader {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 12px;
+}
+
+.sil-v17-path-item {
+    flex: 1;
+}
+
+.sil-v17-path-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    color: #64748b;
+    font-weight: 700;
+    margin-bottom: 2px;
+    font-family: var(--sil-font-main);
+}
+
+.sil-v17-path-value {
+    font-weight: 600;
+    color: #1e293b;
+    font-family: var(--sil-font-main);
+}
+
+.sil-v17-path-arrow {
+    color: var(--sil-primary);
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.sil-v17-search-step {
+    padding: 20px 24px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.sil-v17-search-label {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-family: var(--sil-font-main);
+}
+
+.sil-v17-search-input-group {
+    display: flex; 
+    gap: 10px;
+    position: relative; /* Base for absolute dropdown */
+}
+
+.sil-v17-results-container {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%; /* Match parent width */
+    max-height: 320px;
+    overflow-y: auto;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    z-index: 2000; /* Force above modal layers */
+    margin-top: 5px;
+    display: none;
+    backdrop-filter: blur(10px);
+}
+
+.sil-booster-result-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f1f5f9;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.sil-booster-result-item:last-child {
+    border-bottom: none;
+}
+
+.sil-booster-result-item:hover {
+    background: #f8fafc;
+}
+
+.sil-booster-result-item.active {
+    background: #eff6ff;
+    border-left: 4px solid var(--sil-primary);
+}
+
+.sil-v17-anchor-section {
+    padding: 16px 24px;
+    background: #fdfdfd;
+}
+
+.sil-v17-suggestions-tag {
+    display: inline-block;
+    padding: 4px 10px;
+    background: #eef2ff;
+    color: #4338ca;
+    border: 1px solid #c7d2fe;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin: 4px 4px 4px 0;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--sil-font-mono);
+}
+
+.sil-v17-suggestions-tag:hover {
+    background: var(--sil-primary);
+    color: #fff;
+    border-color: var(--sil-primary);
+}
+
+.sil-v17-opportunity-box {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
 .anchor-option .anchor-text { flex: 1; font-size: 14px; color: #334155; }
 
 .anchor-option .anchor-badge { font-size: 9px; font-weight: 700; background: #f1f5f9; color: #64748b; padding: 3px 8px; border-radius: 6px; text-transform: uppercase; }
@@ -1321,3 +1675,12 @@ body.sil-fullscreen-mode {
 .anchor-option.custom input[type="text"] { width: 100%; border: none; background: transparent; padding: 0; font-size: 14px; outline: none; }
 
 .sil-modal-footer { padding: 20px 28px; background: #f8fafc; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 14px; }
+/* ?? SIL Toast System (V17 Signature) */
+#sil-toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+.sil-toast { background: #1e293b; color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05); display: flex; align-items: center; gap: 10px; animation: sil-toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; pointer-events: all; border-left: 4px solid #3b82f6; min-width: 250px; }
+.sil-toast.success { border-left-color: #10b981; }
+.sil-toast.error { border-left-color: #ef4444; }
+.sil-toast.warning { border-left-color: #f59e0b; }
+@keyframes sil-toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.sil-toast.fade-out { animation: sil-toast-out 0.3s forwards; }
+@keyframes sil-toast-out { from { transform: translateX(0); opacity: 1; } to { transform: translateX(120%); opacity: 0; } }

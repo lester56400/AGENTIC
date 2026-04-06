@@ -1,3 +1,5 @@
 ok, crèe un dossier "upload_" suivi de la date et l'heure. j'ai besoin de tous les fichiers nécessaires au plugin pour uploader sur mon wordpress. Ne mets que les fichiers et dépendances nécessaires au fonctionnement (sans vendor ni infomap  ni composer.json, ni les fichiers md, ni llms.txt). pas besoin de .zip. Utilise les commandes natives PowerShell pour garantir le transfert des fichiers.
+
+
 c'est ce type de commande qui marche sans faire d'erreur :
 powershell -Command "New-Item -ItemType Directory -Path upload_20260401_1406; Copy-Item -Path assets -Destination upload_20260401_1406 -Recurse; Copy-Item -Path includes -Destination upload_20260401_1406 -Recurse; Copy-Item -Path smart-internal-links.php -Destination upload_20260401_1406; Copy-Item -Path uninstall.php -Destination upload_20260401_1406; Copy-Item -Path readme.txt -Destination upload_20260401_1406; Get-ChildItem -Path upload_20260401_1406"

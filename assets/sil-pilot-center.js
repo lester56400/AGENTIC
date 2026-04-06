@@ -1,29 +1,13 @@
-/* 
-   Smart Internal Links - Pilot Center JS
-   v2.5.3 - Atomic Diagnostics & Safe Boot
-*/
-
-jQuery(document).ready(function($) {
-    console.log("SIL Pilot v2.5.3 Init 💎");
+(function($) {
+    "use strict";
+    jQuery(document).ready(function($) {
 
     // Global Safety Check
     const isDataValid = () => typeof silSharedData !== 'undefined' && silSharedData.ajaxurl && silSharedData.nonce;
 
     if (!isDataValid()) {
-        console.error("SIL Pilot Critical: Metadata missing (silSharedData).", typeof silSharedData !== 'undefined' ? silSharedData : 'UNDEFINED');
         $('.action-list').html('<p class="empty-state">❌ Erreur de configuration (Metadata).</p>');
         return;
-    }
-
-    // Custom Toast Notification System
-    function silToast(msg, type = 'success') {
-        let toast = $('<div class="sil-toast ' + type + '">' + msg + '</div>');
-        $('body').append(toast);
-        setTimeout(() => toast.addClass('show'), 10);
-        setTimeout(() => {
-            toast.removeClass('show');
-            setTimeout(() => toast.remove(), 400);
-        }, 3000);
     }
 
     // --- Core Logic ---
@@ -33,20 +17,12 @@ jQuery(document).ready(function($) {
             loadPilotActions();
             // Load journal only if tab active, else deferred
         } catch (e) {
-            console.error("SIL Pilot Boot Error:", e);
         }
     }
 
     function initAnimations() {
-        $('.glass-card').each(function(index) {
-            $(this).css({
-                'opacity': '0',
-                'transform': 'translateY(20px)',
-                'transition-delay': (index * 0.1) + 's'
-            });
-            setTimeout(() => {
-                $(this).css({ 'opacity': '1', 'transform': 'translateY(0)' });
-            }, 100);
+        $('.glass-card').addClass('sil-staggered').each(function(index) {
+            $(this).addClass('sil-staggered-' + ((index % 4) + 1));
         });
     }
 
@@ -65,9 +41,17 @@ jQuery(document).ready(function($) {
                 renderBoosters(response.data.boosters || []);
             } else {
                 list.html('<p class="empty-state">❌ Erreur Serveur: ' + (response.data || 'Inconnu') + '</p>');
+                window.silNotify('Erreur : ' + response.data, 'error');
             }
-        }).fail(function(xhr) {
-            list.html('<p class="empty-state">❌ Erreur Réseau (' + xhr.status + ').</p>');
+        }).fail(function(xhr, status, error) {
+            const statusCode = xhr.status;
+            let msg = 'Erreur réseau ou serveur (' + statusCode + ')';
+            if (statusCode === 500) msg = 'Erreur interne du serveur (500). Vérifiez les logs PHP ou l\'allocation mémoire.';
+            if (statusCode === 504) msg = 'Gateway Timeout (504). Le scan est trop lourd pour le serveur.';
+            
+            list.html('<p class="empty-state">❌ ' + msg + '</p>');
+            window.silNotify(msg, 'error');
+            console.error('SIL BMAD DEBUG:', status, error, xhr.responseText);
         });
     }
 
@@ -166,22 +150,41 @@ jQuery(document).ready(function($) {
                     });
                 }
 
+                // Recent Errors (Option B)
+                if (d.recent_errors && d.recent_errors.length > 0) {
+                    html += '<div class="diag-section-title">📜 Logs d\'Erreurs Récents (PHP)</div>';
+                    html += '<div class="diag-error-log" style="background:#1e293b; color:#cbd5e1; padding:12px; border-radius:8px; font-family:monospace; font-size:10px; max-height:200px; overflow-y:auto; margin-top:10px; line-height:1.4;">';
+                    d.recent_errors.forEach(err => {
+                        let color = '#94a3b8';
+                        if (err.toLowerCase().includes('fatal') || err.toLowerCase().includes('error')) color = '#f87171';
+                        else if (err.toLowerCase().includes('warning')) color = '#fbbf24';
+                        
+                        html += `<div style="color:${color}; border-bottom:1px solid #334155; padding-bottom:4px; margin-bottom:4px;">${err}</div>`;
+                    });
+                    html += '</div>';
+                }
+
                 html += '</div>';
                 report.html(html);
             } else {
                 report.html('<p class="diag-val error">❌ Erreur AJAX Diagnostic: ' + (response.data || 'Réponse vide') + '</p>');
+                window.silNotify('Erreur Diagnostic : ' + (response.data || 'Réponse vide'), 'error');
             }
         }).fail(function(xhr, textStatus, errorThrown) {
-            console.error("SIL Diagnostic AJAX failed:", textStatus, errorThrown, xhr.responseText);
-            let errorMsg = '❌ Erreur Réseau (' + xhr.status + ')';
-            if (xhr.status === 0) {
+            const status = xhr.status;
+            let errorMsg = '❌ Erreur Réseau (' + status + ')';
+            if (status === 0) {
                 errorMsg = '❌ Erreur Réseau: Impossible de joindre le serveur. Vérifiez la connexion.';
-            } else if (xhr.status === 400) {
+            } else if (status === 400) {
                 errorMsg = '❌ Route AJAX non enregistrée (400). La route "sil_get_pilotage_diagnostics" est peut-être absente.';
-            } else if (xhr.status === 403) {
+            } else if (status === 403) {
                 errorMsg = '❌ Nonce expiré ou permissions insuffisantes (403).';
+            } else if (status === 500) {
+                errorMsg = '❌ Erreur interne du serveur (500). Vérifiez les logs PHP.';
             }
+            
             report.html('<p class="diag-val error">' + errorMsg + '</p>');
+            window.silNotify(errorMsg, 'error');
         });
     }
 
@@ -200,9 +203,15 @@ jQuery(document).ready(function($) {
                 renderJournal(response.data);
             } else {
                 list.html('<p class="empty-state">Erreur serveur journal.</p>');
+                window.silNotify('Erreur de chargement du journal.', 'error');
             }
         }).fail(function(xhr) {
-            list.html('<p class="empty-state">❌ Erreur Réseau journal (' + xhr.status + ').</p>');
+            const status = xhr.status;
+            let msg = '❌ Erreur Réseau journal (' + status + ')';
+            if (status === 403) msg = '❌ Session expirée (403/Journal).';
+            
+            list.html('<p class="empty-state">' + msg + '</p>');
+            window.silNotify(msg, 'error');
         });
     }
 
@@ -255,7 +264,7 @@ jQuery(document).ready(function($) {
     $('#submit-manual-log').on('click', function() {
         const btn = $(this);
         const pid = $('#manual-post-id').val();
-        if (!pid) { silToast('Sélectionnez un article.', 'error'); return; }
+        if (!pid) { window.silNotify('Sélectionnez un article.', 'error'); return; }
         
         btn.prop('disabled', true).html('<span class="sil-spinner"></span>...');
         $.post(silSharedData.ajaxurl, {
@@ -269,10 +278,10 @@ jQuery(document).ready(function($) {
             if (res.success) {
                 $('#manual-post-search, #manual-action-note').val('');
                 $('#manual-post-id').val('');
-                silToast('✅ Action enregistrée avec succès.');
+                window.silNotify('✅ Action enregistrée avec succès.');
                 loadJournal();
             } else {
-                silToast('Erreur: ' + res.data, 'error');
+                window.silNotify('Erreur: ' + res.data, 'error');
             }
         });
     });
@@ -289,39 +298,39 @@ jQuery(document).ready(function($) {
         $('.sil-pilot-target-popover').remove();
 
         const popoverHtml = `
-        <div class="sil-pilot-target-popover" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:100010;background:#fff;border-radius:12px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.25);padding:24px;width:420px;max-width:90vw;font-family:'DM Sans',sans-serif;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                <h4 style="margin:0;font-size:15px;color:#0f172a;">🌉 Créer un Pont Sémantique</h4>
-                <button class="sil-popover-close" style="background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;">&times;</button>
+        <div class="sil-pilot-target-popover">
+            <div class="sil-popover-header">
+                <h4>🌉 Créer un Pont Sémantique</h4>
+                <button class="sil-popover-close">&times;</button>
             </div>
-            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:16px;">
-                <div style="font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;margin-bottom:4px;">📄 Source</div>
-                <div style="font-size:13px;font-weight:600;color:#1e293b;">${sourceTitle}</div>
+            <div class="sil-popover-section">
+                <div class="sil-popover-label">📄 Source</div>
+                <div class="sil-popover-value">${sourceTitle}</div>
             </div>
-            <div style="margin-bottom: 12px;">
-                <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;display:block;margin-bottom:6px;">🎯 Article Cible</label>
-                <input type="text" class="sil-popover-target-search" placeholder="Tapez le titre d'un article..." style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;box-sizing:border-box;">
-                <div class="sil-popover-results" style="max-height:160px;overflow-y:auto;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;display:none;"></div>
+            <div class="sil-mt-2">
+                <label class="sil-popover-label">🎯 Article Cible</label>
+                <input type="text" class="sil-popover-target-search sil-popover-input" placeholder="Tapez le titre d'un article...">
+                <div class="sil-popover-results"></div>
             </div>
-            <div style="margin-bottom:12px; display:flex; gap:10px;">
+            <div class="sil-mt-2 sil-flex-container" style="display:flex; gap:10px;">
                 <div style="flex:1;">
-                    <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;display:block;margin-bottom:6px;">🔗 Ancre</label>
-                    <input type="text" class="sil-popover-anchor" value="${presetAnchor}" placeholder="Ex: formation SEO" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;box-sizing:border-box;">
+                    <label class="sil-popover-label">🔗 Ancre</label>
+                    <input type="text" class="sil-popover-anchor sil-popover-input" value="${presetAnchor}" placeholder="Ex: SEO">
                 </div>
                 <div style="flex:2;">
-                    <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;display:block;margin-bottom:6px;">📝 Notes / Emplacement</label>
-                    <input type="text" class="sil-popover-note" placeholder="Ex: après le 2e H2, en conclusion..." style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;box-sizing:border-box;">
+                    <label class="sil-popover-label">📝 Notes</label>
+                    <input type="text" class="sil-popover-note sil-popover-input" placeholder="Ex: conclusion...">
                 </div>
             </div>
-            <div class="sil-popover-target-info" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px;margin-bottom:16px;">
-                <div style="font-size:10px;text-transform:uppercase;color:#166534;font-weight:700;margin-bottom:4px;">🎯 Cible sélectionnée</div>
-                <div class="sil-popover-target-name" style="font-size:13px;font-weight:600;color:#166534;"></div>
+            <div class="sil-popover-target-info sil-mt-2">
+                <div class="sil-popover-label">🎯 Cible sélectionnée</div>
+                <div class="sil-popover-target-name sil-popover-value" style="color:#166534;"></div>
             </div>
-            <button class="button button-primary sil-popover-confirm" disabled style="width:100%;justify-content:center;display:flex;align-items:center;gap:8px;padding:10px;">🤖 Générer le Prompt IA</button>
+            <button class="button button-primary sil-popover-confirm sil-w-full sil-mt-4" disabled>🤖 Générer le Prompt IA</button>
             <input type="hidden" class="sil-popover-source-id" value="${sourceId}">
             <input type="hidden" class="sil-popover-target-id" value="">
         </div>
-        <div class="sil-pilot-target-overlay" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:100009;"></div>`;
+        <div class="sil-pilot-target-overlay"></div>`;
 
         $('body').append(popoverHtml);
         $('.sil-popover-target-search').focus();
@@ -349,7 +358,7 @@ jQuery(document).ready(function($) {
                 if (res.success && res.data.length > 0) {
                     let html = '';
                     res.data.forEach(p => {
-                        html += `<div class="sil-popover-result-item" data-id="${p.id}" data-title="${p.title}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:12px;color:#334155;transition:background 0.15s;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'">${p.title}</div>`;
+                        html += `<div class="sil-popover-result-item" data-id="${p.id}" data-title="${p.title}">${p.title}</div>`;
                     });
                     $results.html(html).show();
                 } else {
@@ -390,7 +399,7 @@ jQuery(document).ready(function($) {
             $('body').append($tempBtn.hide());
             window.SIL_Bridge.generate(sourceId, targetId, anchor, $tempBtn, note);
         } else {
-            silToast("Le moteur du pont sémantique IA n'est pas chargé.", 'error');
+            window.silNotify("Le moteur du pont sémantique IA n'est pas chargé.", 'error');
         }
     });
 
@@ -435,14 +444,14 @@ jQuery(document).ready(function($) {
 
             html += `<tr>
                 <td class="col-title">${l.source_title || 'N/A' }</td>
-                <td style="font-style:italic;">
-                    <span style="color:#a1a1aa;">"${l.anchor}"</span>
-                    ${l.note ? `<br><small style="color:#6b7280; font-size: 0.8em;">💬 ${l.note}</small>` : ''}
+                <td class="sil-text-italic">
+                    <span class="sil-text-muted">"${l.anchor}"</span>
+                    ${l.note ? `<br><small class="sil-text-note">💬 ${l.note}</small>` : ''}
                 </td>
                 <td class="col-title">${l.target_title || 'N/A'}</td>
                 <td>
                     ${btnAction}
-                    <button class="btn-delete-scheduled" data-id="${l.id}" style="background:transparent;border:none;color:#ef4444;cursor:pointer;margin-left:10px;" title="Supprimer">🗑️</button>
+                    <button class="btn-delete-scheduled sil-btn-icon-danger" data-id="${l.id}" title="Supprimer">🗑️</button>
                 </td>
             </tr>`;
         });
@@ -490,7 +499,7 @@ jQuery(document).ready(function($) {
         const note = $('#inc-note').val();
 
         if (!source_id || !target_id || !anchor) {
-            silToast('Veuillez remplir les champs obligatoires.', 'error');
+            window.silNotify('Veuillez remplir les champs obligatoires.', 'error');
             return;
         }
 
@@ -507,10 +516,10 @@ jQuery(document).ready(function($) {
             if (res.success) {
                 $('#inc-source-search, #inc-target-search, #inc-anchor, #inc-note').val('');
                 $('#inc-source-id, #inc-target-id').val('');
-                silToast('🌱 Lien programmé avec succès.');
+                window.silNotify('🌱 Lien programmé avec succès.');
                 loadIncubator();
             } else {
-                silToast(res.data, 'error');
+                window.silNotify(res.data, 'error');
             }
         });
     });
@@ -537,7 +546,7 @@ jQuery(document).ready(function($) {
         if (typeof window.SIL_Bridge !== 'undefined') {
             window.SIL_Bridge.generate(source_id, target_id, anchor, btn, note);
         } else {
-            silToast("Le moteur du pont sémantique IA n'est pas chargé sur cette page.", 'error');
+            window.silNotify("Le moteur du pont sémantique IA n'est pas chargé sur cette page.", 'error');
         }
     });
 
@@ -559,4 +568,5 @@ jQuery(document).ready(function($) {
     // Start
     init();
 });
+})(jQuery);
 

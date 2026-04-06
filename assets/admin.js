@@ -1,9 +1,10 @@
-jQuery(document).ready(function ($) {
+(function($) {
+    "use strict";
+    jQuery(document).ready(function ($) {
     // --- DASHBOARD TRI-FORCE (Consolidé) ---
+    window.silToast = window.silNotify;
     // Les gestionnaires de clics pour le Content Gap sont situés en bas du fichier 
     // dans la section "MODULE CONTENT GAP 2026".
-
-    console.log('SIL Admin JS Loaded');
 
     // --- 3. STRESS-TEST ---
     $(document).on('click', '#sil-run-unit-tests', function(e) {
@@ -17,9 +18,19 @@ jQuery(document).ready(function ($) {
             if (r && r.success) {
                 let html = '';
                 r.data.forEach(t => {
-                    const color = t.status ? '#059669' : '#dc2626';
-                    html += `<div style="padding:10px; background:#fff; border-left:4px solid ${color}; font-size:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05); margin-bottom:5px; display:flex; align-items:center; gap:8px;">
-                        ${t.status ? silSharedData.icons.check : silSharedData.icons.x} <strong>${t.name}</strong><br><span style="color:#64748b;">Détail : ${t.val}</span>
+                    let colorClass = 'sil-test-error';
+                    let icon = silSharedData.icons.x;
+                    
+                    if (t.status === true || t.status === 'success') {
+                        colorClass = 'sil-test-success';
+                        icon = silSharedData.icons.check;
+                    } else if (t.status === 'warning') {
+                        colorClass = 'sil-test-warning';
+                        icon = '⚠️';
+                    }
+
+                    html += `<div class="sil-test-item ${colorClass}">
+                        ${icon} <strong>${t.name}</strong><br><span class="sil-test-detail">Détail : ${t.val}</span>
                     </div>`;
                 });
                 $res.html(html);
@@ -32,11 +43,30 @@ jQuery(document).ready(function ($) {
         $('#sil-gap-val').text($(this).val());
     });
 
-    // --- DEBUG HELPER ---
-    // (Removed as per previous success)
-    function logToUI(msg) {
-        console.log('SIL: ' + msg);
-    }
+    // --- 4. GLOBAL NOTIFICATION SYSTEM (Luxury UI) ---
+    window.silNotify = function (message, type) {
+        type = type || 'info';
+        var $container = $('#sil-toast-container');
+        if (!$container.length) {
+            $container = $('<div id="sil-toast-container"></div>').appendTo('body');
+        }
+
+        var icon = 'ℹ️';
+        if (type === 'success') icon = '✅';
+        if (type === 'error') icon = '❌';
+        if (type === 'warning') icon = '⚠️';
+
+        var $toast = $('<div class="sil-toast ' + type + '">' +
+            '<span>' + icon + '</span>' +
+            '<div>' + message + '</div>' +
+            '</div>').appendTo($container);
+
+        setTimeout(function () {
+            $toast.addClass('fade-out');
+            setTimeout(function () { $toast.remove(); }, 400);
+        }, 4000);
+    };
+    window.silToast = window.silNotify;
 
 
 
@@ -51,7 +81,7 @@ jQuery(document).ready(function ($) {
         var $status = $('#sil-gsc-sync-status'); // If we're on the settings page
 
         $btn.prop('disabled', true).text('🤖 Préparation GSC...');
-        if ($status.length) $status.text('Préparation...').css('color', 'orange');
+        if ($status.length) $status.addClass('sil-status-pending').text('Préparation...');
 
         // 1. Fetch the list of ALL post IDs to sync
         $.post(silSharedData.ajaxurl, {
@@ -61,8 +91,8 @@ jQuery(document).ready(function ($) {
             if (!resIDs.success || !resIDs.data || resIDs.data.length === 0) {
                 $btn.prop('disabled', false).text(originalText);
                 var errMsg = 'Aucune page à synchroniser ou erreur d\'API';
-                if ($status.length) $status.text(errMsg).css('color', 'red');
-                else alert(errMsg);
+                if ($status.length) $status.addClass('sil-status-error').text(errMsg);
+                else window.silNotify(errMsg, 'error');
                 return;
             }
 
@@ -85,8 +115,8 @@ jQuery(document).ready(function ($) {
                     // All finished
                     var successMsg = silSharedData.icons.check + ' ' + totalKeywordsSaved + ' mots-clés enregistrés pour ' + totalPages + ' pages !';
                     $btn.html(silSharedData.icons.check + ' Terminé');
-                    if ($status.length) $status.html(successMsg).css('color', 'green');
-                    else alert(totalKeywordsSaved + ' mots-clés enregistrés.');
+                    if ($status.length) $status.removeClass('sil-status-pending').addClass('sil-status-success').html(successMsg);
+                    else window.silNotify(totalKeywordsSaved + ' mots-clés enregistrés.');
 
                     setTimeout(function () { location.reload(); }, 2500);
                     return;
@@ -95,7 +125,7 @@ jQuery(document).ready(function ($) {
                 var idsToProcess = chunks[currentChunk];
                 var progressText = 'Synchronisation... (' + processedPages + '/' + totalPages + ' pages)';
                 $btn.text(progressText);
-                if ($status.length) $status.text(progressText).css('color', 'orange');
+                if ($status.length) $status.text(progressText);
 
                 $.post(silSharedData.ajaxurl, {
                     action: 'sil_force_gsc_sync_batch',
@@ -112,14 +142,14 @@ jQuery(document).ready(function ($) {
                     } else {
                         $btn.prop('disabled', false).text(originalText);
                         var chunkErrMsg = '❌ Erreur sur le lot ' + (currentChunk + 1) + ': ' + (chunkResponse.data || 'Inconnue');
-                        if ($status.length) $status.text(chunkErrMsg).css('color', 'red');
-                        else alert(chunkErrMsg);
+                        if ($status.length) $status.addClass('sil-status-error').text(chunkErrMsg);
+                        else window.silNotify(chunkErrMsg, 'error');
                     }
                 }).fail(function () {
                     $btn.prop('disabled', false).text(originalText);
                     var failMsg = '❌ Erreur réseau lors du lot ' + (currentChunk + 1);
-                    if ($status.length) $status.text(failMsg).css('color', 'red');
-                    else alert(failMsg);
+                    if ($status.length) $status.addClass('sil-status-error').text(failMsg);
+                    else window.silNotify(failMsg, 'error');
                 });
             }
 
@@ -129,8 +159,8 @@ jQuery(document).ready(function ($) {
         }).fail(function () {
             $btn.prop('disabled', false).text(originalText);
             var initFailMsg = '❌ Erreur réseau au démarrage';
-            if ($status.length) $status.text(initFailMsg).css('color', 'red');
-            else alert(initFailMsg);
+            if ($status.length) $status.addClass('sil-status-error').text(initFailMsg);
+            else silToast(initFailMsg, 'error');
         });
     });
 
@@ -143,7 +173,7 @@ jQuery(document).ready(function ($) {
         if (!confirm('Cela va recalculer tous les cocons en fonction du sens des textes. Continuer ?')) return;
 
         $btn.prop('disabled', true).text('⏳ Calcul en cours...');
-        $status.show().text('Calcul des centroïdes et des memberships...').css('color', 'orange');
+        $status.show().addClass('sil-status-pending').text('Calcul des centroïdes et des memberships...');
 
         $.post(silSharedData.ajaxurl, {
             action: 'sil_rebuild_semantic_silos',
@@ -152,15 +182,15 @@ jQuery(document).ready(function ($) {
             $btn.prop('disabled', false).text(originalText);
             if (res.success) {
                 var msg = silSharedData.icons.check + ' Silos recalculés ! ' + (res.data.count || 0) + ' articles classés, ' + (res.data.bridges || 0) + ' ponts détectés.';
-                $status.html(msg).css('color', 'green');
+                $status.removeClass('sil-status-pending').addClass('sil-status-success').html(msg);
                 setTimeout(function () { location.reload(); }, 3000);
             } else {
                 var errMsg = '❌ Erreur: ' + (res.data || 'Inconnue');
-                $status.text(errMsg).css('color', 'red');
+                $status.removeClass('sil-status-pending').addClass('sil-status-error').text(errMsg);
             }
         }).fail(function () {
             $btn.prop('disabled', false).text(originalText);
-            $status.text('❌ Erreur réseau').css('color', 'red');
+            $status.removeClass('sil-status-pending').addClass('sil-status-error').text('❌ Erreur réseau');
         });
     });
 
@@ -183,9 +213,9 @@ jQuery(document).ready(function ($) {
                 $('#stat-broken-links').text(data.broken_links || 0);
 
                 if (data.broken_links > 0) {
-                    $('#card-broken-links').addClass('danger').css('background', '#fef2f2');
+                    $('#card-broken-links').addClass('sil-danger');
                 } else {
-                    $('#card-broken-links').removeClass('danger').css('background', '');
+                    $('#card-broken-links').removeClass('sil-danger');
                 }
             }
             $btn.prop('disabled', false).text('🔄');
@@ -204,10 +234,10 @@ jQuery(document).ready(function ($) {
             nonce: silSharedData.nonce
         }, function (r) {
             if (r.success) {
-                alert('Analyse terminée ! ' + r.data.broken_found + ' nouveau(x) lien(s) cassé(s) identifié(s).');
+                silToast('Analyse terminée ! ' + r.data.broken_found + ' nouveau(x) lien(s) cassé(s) identifié(s).', 'success');
                 $('#sil-refresh-stats').click(); // Refresh counts
             } else {
-                alert('Erreur: ' + (r.data || 'Inconnue'));
+                silToast('Erreur: ' + (r.data || 'Inconnue'), 'error');
             }
             $btn.prop('disabled', false).text(originalText);
         });
@@ -289,11 +319,10 @@ jQuery(document).ready(function ($) {
                     var id = 'link-' + postId + '-' + idx;
 
                     // Gestion affichage Cornerstone
-                    var cornerstoneBadge = link.is_cornerstone ? ' <span style="background:#fef3c7; color:#d97706; padding:2px 6px; border-radius:4px; font-size:10px; border:1px solid #fcd34d; font-weight:bold; display:inline-flex; align-items:center; gap:4px;">' + silSharedData.icons.star + ' PILIER</span>' : '';
-                    var borderStyle = link.is_cornerstone ? 'border-left: 3px solid #f59e0b;' : '';
-                    var bgStyle = link.is_cornerstone ? 'background-color: #fffbeb;' : '';
+                    const cornerstoneBadge = link.is_cornerstone ? ` <span class="sil-badge-cornerstone" title="Contenu Pilier">💎 PILLIER</span>` : '';
+                    const itemClass = link.is_cornerstone ? 'sil-link-item-cornerstone' : '';
 
-                    html += '<div class="sil-link-item" style="' + borderStyle + bgStyle + '">';
+                    html += '<div class="sil-link-item ' + itemClass + '">';
                     html += '<input type="checkbox" id="' + id + '" class="sil-link-cb" checked ';
                     html += 'data-target-id="' + link.target_id + '" ';
                     html += 'data-target-url="' + escAttr(link.target_url) + '" ';
@@ -365,10 +394,10 @@ jQuery(document).ready(function ($) {
             if (r.success && r.count > 0) {
                 $btn.removeClass('sil-btn-primary').addClass('sil-btn-success').text('✓ ' + r.count + ' inséré(s)');
                 $row.addClass('sil-row-done');
-                $preview.find('.sil-link-cb:checked').closest('.sil-link-item').css('background', '#ecfdf5');
+                $preview.find('.sil-link-cb:checked').closest('.sil-link-item').addClass('sil-link-item-success');
             } else {
                 $btn.prop('disabled', false).text('Insérer les liens cochés');
-                alert(r.message || 'Erreur');
+                silToast(r.message || 'Erreur', 'error');
             }
         }).fail(function () {
             $btn.prop('disabled', false).text('Insérer les liens cochés');
@@ -397,7 +426,7 @@ jQuery(document).ready(function ($) {
 
                 var html = '<div class="sil-preview-box sil-success-box"><div class="sil-preview-title">✅ ' + r.links.length + ' lien(s) ajouté(s)</div>';
                 r.links.forEach(function (link) {
-                    html += '<div class="sil-link-item" style="background:#ecfdf5;">';
+                    html += '<div class="sil-link-item sil-link-item-success">';
                     html += '<span class="sil-link-target">' + escHtml(link.target_title) + '</span>';
                     html += ' → <span class="sil-link-anchor">"' + escHtml(link.anchor) + '"</span>';
                     html += '</div>';
@@ -478,7 +507,7 @@ jQuery(document).ready(function ($) {
             if (queue.length === 0) {
                 $btn.prop('disabled', false).text('Prévisualiser tous');
                 if (errors > 0) {
-                    alert('Terminé avec ' + errors + ' erreur(s). Vérifiez la console.');
+                    silToast('Terminé avec ' + errors + ' erreur(s).', 'warning');
                 }
                 return;
             }
@@ -563,21 +592,21 @@ jQuery(document).ready(function ($) {
     });
 
     function updateDetailedPanel(node) {
-        var html = '<div id="sil-lhf-warning-box" style="display:none; margin-top:15px; padding:10px; background-color:#f0fdf4; border:1px solid #86efac; border-radius:6px;">' +
-            '<h4 style="margin:0 0 5px 0; color:#166534; font-size:13px;">🚀 Opportunité (Low Hanging Fruit)</h4>' +
-            '<p style="margin:0 0 10px 0; font-size:12px; color:#15803d;">Cette page a un fort potentiel (position entre 10 et 20 avec beaucoup d\'impressions) sur la requête <strong id="sil-lhf-query"></strong>.</p>' +
-            '<a href="' + (typeof silSharedData !== 'undefined' ? silSharedData.admin_url : '') + '?page=smart-internal-links&target_post=' + node.id + '" id="sil-boost-lhf-btn" class="sil-btn sil-btn-primary sil-btn-sm" style="width:100%; justify-content:center; background:#16a34a; border-color:#15803d; text-decoration:none;">🔗 Booster avec des liens internes</a>' +
+        var html = '<div id="sil-lhf-warning-box" class="sil-hidden" style="margin-top:15px;">' +
+            '<h4 class="sil-lhf-header">🚀 Opportunité (Low Hanging Fruit)</h4>' +
+            '<p class="sil-lhf-text">Cette page a un fort potentiel (position entre 10 et 20 avec beaucoup d\'impressions) sur la requête <strong id="sil-lhf-query"></strong>.</p>' +
+            '<a href="' + (typeof silSharedData !== 'undefined' ? silSharedData.admin_url : '') + '?page=smart-internal-links&target_post=' + node.id + '" id="sil-boost-lhf-btn" class="sil-btn sil-btn-primary sil-btn-sm">🔗 Booster avec des liens internes</a>' +
             '</div>' +
 
             // --- NEW: CANNIBALISATION WARNING ---
-            '<div id="sil-cannibalisation-warning-box" style="display:none; margin-top:15px; padding:10px; background-color:#fef2f2; border:1px solid #f87171; border-radius:6px;">' +
-            '<h4 style="margin:0 0 5px 0; color:#991b1b; font-size:13px;">🚨 Cannibalisation Sémantique</h4>' +
-            '<p style="margin:0 0 10px 0; font-size:12px; color:#b91c1c;">Cette page est en concurrence directe sur la requête <strong id="sil-cannibal-query"></strong> avec l\'article : <span id="sil-cannibal-rival" style="font-weight:500;"></span> (dans le même Silo).</p>' +
-            '<p style="font-size:11px; color:#b91c1c; margin-bottom:0;">Action reco : Fusionnez les contenus, pointez l\'un vers l\'autre en Canonical, ou différenciez les angles.</p>' +
+            '<div id="sil-cannibalisation-warning-box" class="sil-hidden sil-cannibal-box" style="margin-top:15px;">' +
+            '<h4 class="sil-cannibal-header">🚨 Cannibalisation Sémantique</h4>' +
+            '<p class="sil-cannibal-text">Cette page est en concurrence directe sur la requête <strong id="sil-cannibal-query"></strong> avec l\'article : <span id="sil-cannibal-rival" class="sil-rival-title"></span> (dans le même Silo).</p>' +
+            '<p class="sil-cannibal-footer">Action reco : Fusionnez les contenus, pointez l\'un vers l\'autre en Canonical, ou différenciez les angles.</p>' +
             '</div>' +
 
             // --- NEW: GSC DATA ---
-            '<div id="sil-gsc-data-box" style="margin-top:15px; padding-top:15px; border-top:1px solid #e2e8f0;">' +
+            '<div id="sil-gsc-data-box" class="sil-gsc-data-container">' +
             '</div>';
 
         $('.sil-panel-body').append(html);
@@ -631,18 +660,18 @@ jQuery(document).ready(function ($) {
         const $btn = $(this);
         const postId = $btn.data('post-id');
         
-        $btn.prop('disabled', true).html('<span class="spinner is-active" style="margin:0; float:none;"></span>');
+        $btn.prop('disabled', true).html('<span class="spinner is-active"></span>');
 
         $.post(silSharedData.ajaxurl, {
             action: 'sil_get_orphan_adoption_info',
-            nonce: silSharedData.nonce,
+            nonce: silSharedData.admin_nonce || silSharedData.nonce,
             post_id: postId
-        }, function(r) {
+        }, function (r) {
             $btn.prop('disabled', false).text('Adopter');
             if (r.success) {
                 openAdoptionModal(postId, r.data);
             } else {
-                alert('Erreur : ' + (r.data || 'Impossible de trouver un Mégaphone.'));
+                silToast('Erreur : ' + (r.data || 'Impossible de trouver un Mégaphone.'), 'error');
             }
         });
     });
@@ -656,7 +685,7 @@ jQuery(document).ready(function ($) {
                         <button class="sil-modal-close">&times;</button>
                     </div>
                     <div class="sil-modal-body">
-                        <p style="margin-bottom:15px; color:#64748b;">
+                        <p class="sil-modal-desc">
                             L'IA a identifié l'article suivant comme le meilleur <strong>Mégaphone</strong> (Pivot) de ce silo pour accueillir un lien vers votre article orphelin.
                         </p>
                         
@@ -684,6 +713,7 @@ jQuery(document).ready(function ($) {
                                 </label>
                             </div>
                         </div>
+                        <div class="sil-v17-intelligence"></div>
                     </div>
                     <div class="sil-modal-footer">
                         <button class="sil-btn sil-btn-secondary sil-modal-close">Annuler</button>
@@ -723,7 +753,7 @@ jQuery(document).ready(function ($) {
         if (window.SIL_Bridge) {
             window.SIL_Bridge.generate(megaphoneId, orphanId, anchor, $btn);
         } else {
-            alert('Bridge Manager non chargé.');
+            silToast('Bridge Manager non chargé.', 'error');
         }
     });
 
@@ -738,7 +768,7 @@ jQuery(document).ready(function ($) {
         }
 
         if (!anchor) {
-            alert('Veuillez choisir ou saisir une ancre.');
+            silToast('Veuillez choisir ou saisir une ancre.', 'warning');
             return;
         }
 
@@ -760,11 +790,8 @@ jQuery(document).ready(function ($) {
                     });
                 }, 1000);
             } else {
-                const errorMsg = r.message || r.data || 'Échec de l\'insertion.';
-                if (confirm('L\'insertion directe a échoué (ancre introuvable ?). Voulez-vous essayer de créer un "Pont Sémantique" via l\'IA pour insérer le lien manuellement ?')) {
-                    $('#sil-bridge-adopt').click();
-                } else {
-                    alert('Erreur : ' + errorMsg);
+                if (!r.success) {
+                    $('#sil-adopt-modal').find('.sil-modal-body').prepend('<div class="sil-error-msg">Erreur: ' + r.data + '</div>');
                     $btn.prop('disabled', false).text('Réessayer');
                 }
             }
@@ -797,12 +824,12 @@ jQuery(document).ready(function ($) {
                     renderSilotageTable('gap-silotage', response.data.silotage);
                 }
             } else {
-                alert('Erreur: ' + (response.data || 'Inconnue'));
+                silToast('Erreur: ' + (response.data || 'Inconnue'), 'error');
             }
         }).fail(function() {
             $btn.prop('disabled', false);
             $loader.hide();
-            alert('Erreur réseau ou serveur lors du scan.');
+            silToast('Erreur réseau ou serveur lors du scan.', 'error');
         });
     });
 
@@ -926,9 +953,9 @@ jQuery(document).ready(function ($) {
         }, function(response) {
             if (response.success) {
                 $btn.text('✅ Prêt').addClass('button-disabled');
-                alert('Draft créé avec succès !');
+                silToast('Draft créé avec succès !', 'success');
             } else {
-                alert('Erreur: ' + response.data);
+                silToast('Erreur: ' + response.data, 'error');
                 $btn.prop('disabled', false).text('📝 Créer Article');
             }
         });
@@ -951,14 +978,14 @@ jQuery(document).ready(function ($) {
         }, function(response) {
             if (response.success) {
                 $btn.text('✅ Inséré').removeClass('button-primary').addClass('button-disabled');
-                alert(response.data);
+                silToast(response.data, 'success');
             } else {
-                alert('Erreur: ' + response.data);
+                silToast('Erreur: ' + response.data, 'error');
                 $btn.prop('disabled', false).text('✨ Inventer le lien (IA)');
             }
         }).fail(function() {
             $btn.prop('disabled', false).text('✨ Inventer le lien (IA)');
-            alert('Erreur réseau.');
+            silToast('Erreur réseau.', 'error');
         });
     });
 
@@ -987,20 +1014,45 @@ jQuery(document).ready(function ($) {
                         new_title: newTitle
                     }, function(res) {
                         if (res.success) {
-                            alert("✅ Page désoptimisée ! Le conflit sera automatiquement levé au prochain scan GSC.");
+                            silToast("✅ Page désoptimisée ! Le conflit sera automatiquement levé au prochain scan GSC.", 'success');
                         } else {
-                            alert("❌ Erreur : " + (res.data || "Impossible de mettre à jour le SEO."));
+                            silToast("❌ Erreur : " + (res.data || "Impossible de mettre à jour le SEO."), 'error');
                         }
                     });
                 }
             } else {
-                alert("❌ Erreur IA : " + (response.data || "Inconnue"));
+                silToast("❌ Erreur IA : " + (response.data || "Inconnue"), 'error');
             }
         }).fail(function() {
             $btn.prop('disabled', false).text('📉 Désoptimiser (IA)');
-            alert("❌ Erreur réseau lors de l'appel IA.");
+            silToast("❌ Erreur réseau lors de l'appel IA.", 'error');
         });
     });
+
+    // --- PONT SÉMANTIQUE (Phase 2 BMAD) ---
+    window.silFetchAndShowBridgePrompt = function(sourceId, targetId, anchor, pIndex = -1) {
+        $.post(silSharedData.ajaxurl, {
+            action: 'sil_generate_bridge_prompt',
+            nonce: silSharedData.admin_nonce || silSharedData.nonce,
+            source_id: sourceId,
+            target_id: targetId,
+            anchor_text: anchor,
+            p_index: pIndex
+        }, function(response) {
+            if (response.success) {
+                window.openBridgeModal(response.data);
+            } else {
+                silToast('Erreur: ' + (response.data || 'Impossible de générer le prompt.'), 'error');
+            }
+        }).fail(function() {
+            // Restore UI state if it was loading
+            const $refreshBtn = $('#sil-change-p-location');
+            if ($refreshBtn.length) {
+                $refreshBtn.text('🔄 Changer d\'emplacement').prop('disabled', false);
+            }
+            alert("Erreur réseau ou serveur. Impossible de générer l'emplacement.");
+        });
+    };
 
     // Action Pont Sémantique (Workflow Hybride) - Dashboard Content Gap
     $(document).on('click', '.sil-opp-bridge', function() {
@@ -1009,12 +1061,19 @@ jQuery(document).ready(function ($) {
         const targetId = $btn.data('target');
         const anchorText = $btn.data('anchor') || 'Cliquez ici';
         
-        if (window.SIL_Bridge) {
-            window.SIL_Bridge.generate(sourceId, targetId, anchorText, $btn);
-        } else {
-            alert('Bridge Manager non chargé.');
-        }
+        window.silFetchAndShowBridgePrompt(sourceId, targetId, anchorText);
     });
+
+    $(document).on('click', '.sil-local-bridge-btn', function(e) {
+        e.preventDefault();
+        const $btn = $(this);
+        const sourceId = $btn.data('source');
+        const targetId = $btn.data('target');
+        const anchor = $btn.data('anchor') || '';
+        
+        window.silFetchAndShowBridgePrompt(sourceId, targetId, anchor);
+    });
+
 
     // Action Pont Rapide - Dashboard Intrus
     $(document).on('click', '.sil-auto-bridge-btn', function() {
@@ -1033,7 +1092,7 @@ jQuery(document).ready(function ($) {
             if (r.success) {
                 window.SIL_Bridge.generate(r.data.megaphone_id, sourceId, r.data.anchors[0], $btn);
             } else {
-                alert('Impossible de trouver un pivot pour ce silo.');
+                silToast('Impossible de trouver un pivot pour ce silo.', 'error');
                 $btn.prop('disabled', false).text('🌉 Pont Rapide');
             }
         });
@@ -1057,7 +1116,7 @@ jQuery(document).ready(function ($) {
                     $('#sil-audit-feedback-settings').html(msg).fadeIn();
                 }
             } else {
-                alert('Erreur : ' + (r ? r.data : 'Erreur inconnue'));
+                silToast('Erreur : ' + (r ? r.data : 'Erreur inconnue'), 'error');
             }
         });
     });
@@ -1144,18 +1203,17 @@ jQuery(document).ready(function ($) {
                 }
             } else {
                 const errorMsg = (r && r.data) ? r.data : 'Erreur API ou Timeout';
-                alert('Erreur: ' + errorMsg);
+                silToast('Erreur: ' + errorMsg, 'error');
                 $('#sil-start-indexing').prop('disabled', false).text('🔍 Relancer');
                 $statusText.text('Erreur lors du traitement.');
             }
         }).fail(function(xhr) {
-            console.error('SIL Indexing Batch Failed:', xhr);
             const status = xhr.status;
             let msg = 'Erreur réseau ou serveur (' + status + ')';
             if (status === 500) msg = 'Erreur interne du serveur (500). Vérifiez vos logs PHP.';
             if (status === 504) msg = 'Gateway Timeout (504). Le serveur est trop lent.';
             
-            alert('L\'indexation a échoué : ' + msg);
+            silToast('L\'indexation a échoué : ' + msg, 'error');
             $('#sil-start-indexing').prop('disabled', false).text('🔍 Relancer');
             $statusText.text('Processus interrompu.');
         });
@@ -1173,4 +1231,5 @@ jQuery(document).ready(function ($) {
 
 });
 
+})(jQuery);
 

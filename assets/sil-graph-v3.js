@@ -1,4 +1,6 @@
-jQuery(document).ready(function ($) {
+(function($) {
+    "use strict";
+    $(function () {
     let cy = null;
     let rawGraphData = null;
     const $container = $('#sil-graph-container');
@@ -161,10 +163,8 @@ jQuery(document).ready(function ($) {
             const $select = $('#sil-silo-filter');
             $select.find('option[value!="all"]').remove();
             
-            // Si jamais la liste est vide (pas de noeud parent), on logue pour le debug
-            if (Object.keys(siloLabels).length === 0) {
-                console.warn("Aucun nom de silo detecte dans data.nodes.");
-            } else {
+            // Si jamais la liste est vide (pas de noeud parent), on ignore silencieusement en production
+            if (Object.keys(siloLabels).length !== 0) {
                 // Tri numerique des ID de silo pour un bel affichage
                 Object.keys(siloLabels).sort((a,b) => parseInt(a) - parseInt(b)).forEach(function(cid) {
                     $select.append('<option value="' + cid + '">' + siloLabels[cid] + '</option>');
@@ -206,7 +206,6 @@ jQuery(document).ready(function ($) {
 
             renderCytoscape(data, maxPagerank, maxWeight, siloLabels);
         } catch (e) {
-            console.error(e);
             handleGraphError("Erreur de traitement des donnees locales : " + e.message);
         }
     }
@@ -222,8 +221,8 @@ jQuery(document).ready(function ($) {
                         selector: 'node[^is_silo_parent]',
                         style: {
                             'label': 'data(label)',
-                            'width': 'mapData(gsc_impressions, 0, 1500, 40, 120)',
-                            'height': 'mapData(gsc_impressions, 0, 1500, 40, 120)',
+                            'width': 'mapData(gsc_impressions, 0, 1500, 90, 200)',
+                            'height': 'mapData(gsc_impressions, 0, 1500, 90, 200)',
                             'background-color': n => getColorForCluster(n.data('cluster_id')),
                             'color': '#0f172a',
                             'font-size': '14px',
@@ -311,7 +310,6 @@ jQuery(document).ready(function ($) {
                 ]
             });
         } catch (err) {
-            console.error("Cytoscape Init Error:", err);
             handleGraphError("Erreur d'initialisation du graphe : " + err.message + ". Essayez de vider le cache du navigateur.");
             return;
         }
@@ -369,7 +367,7 @@ jQuery(document).ready(function ($) {
                 silo0Nodes.shift({ x: targetX - s0Cx, y: targetY - s0Cy });
             }
         } catch (e) {
-            console.error("Erreur au repositionnement du silo 0 :", e);
+            // Silo 0 repositioning failure is non-fatal
         }
 
         try { cy.fit(null, 40); } catch (e) {}
@@ -519,7 +517,7 @@ jQuery(document).ready(function ($) {
                             html += '<div style="margin-top:8px; padding-top:8px; border-top:1px solid #ddd6fe;">';
                             html += '<div style="display:flex; align-items:flex-start; gap:8px; color:#1e293b; line-height:1.4;">' + silSharedData.icons.lightbulb + ' <span><strong>Conseil IA :</strong> Déplacez cet article vers le silo <strong>' + d.recommended_silo_name + '</strong> (proche de <em>"' + d.closest_content_title + '"</em>).</span></div>';
                             html += '<div style="margin-top:12px; text-align:center;">';
-                            html += '<button class="button button-primary sil-reco-bridge-btn" data-source="' + postId + '" data-target="' + d.closest_content_id + '" data-title="' + d.closest_content_title.replace(/"/g,'&quot;') + '" style="font-size:11px; padding:6px 16px; height:auto; line-height:1.4; border-radius:20px; display:inline-flex; align-items:center; gap:8px;">' + silSharedData.icons.bridge + ' Créer un Pont Sémantique Direct</button>';
+                            html += '<button class="button button-primary sil-reco-bridge-btn" data-source="' + postId + '" data-target="' + d.closest_content_id + '" data-title="' + d.closest_content_title.replace(/"/g,'&quot;') + '" style="font-size:11px; padding:6px 16px; height:auto; line-height:1.4; border-radius:20px; display:inline-flex; align-items:center; gap:8px;">' + silSharedData.icons.bridge + ' Créer le prompt pour le pont</button>';
                             html += '</div></div>';
                         }
                     } else {
@@ -594,7 +592,9 @@ jQuery(document).ready(function ($) {
                     d.semantic_recommendations.forEach(function(reco) {
                         html += '<li style="margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid #e0f2fe; last-child:border-bottom:none;">';
                         html += '<div style="font-size:11px; font-weight:600; color:#1e293b; margin-bottom:4px;">' + reco.title + ' <span style="color:#0ea5e9; font-weight:700;">(' + reco.score + '%)</span></div>';
-                        html += '<button class="button button-secondary sil-reco-bridge-btn" data-source="' + postId + '" data-target="' + reco.id + '" data-title="' + reco.title.replace(/"/g,'&quot;') + '" style="font-size:10px; padding:2px 8px; height:auto; line-height:1.5;">Cr\u00e9er un Pont S\u00e9mantique</button>';
+                        html += '<div style="display:flex; gap:5px;">';
+                        html += '<button class="button button-primary sil-reco-bridge-btn sil-manual-bridge-trigger" data-source="' + postId + '" data-target="' + reco.id + '" data-title="' + reco.title.replace(/"/g,'&quot;') + '" style="font-size:10px; padding:2px 8px; flex:1;">🌉 Créer le prompt pour le pont</button>';
+                        html += '</div>';
                         html += '</li>';
                     });
                     html += '</ul></div>';
@@ -626,12 +626,20 @@ jQuery(document).ready(function ($) {
                     html += '</div>';
                 }
 
-                // --- NEW: MISSING INLINKS MODULE ---
-                html += '<div id="sil-missing-inlinks-container" style="margin-top:20px; padding-top:15px; border-top:1px solid #e2e8f0;">';
-                html += '<strong style="font-size:10px; text-transform:uppercase; color:#0f172a;">🎯 Opportunités de Maillage (Même Silo)</strong>';
-                html += '<div id="sil-missing-inlinks-list" style="margin-top:10px;">';
-                html += '<div class="spinner is-active" style="float:none; margin:10px auto; display:block;"></div>';
-                html += '</div></div>';
+                // Manual Bridge creation
+                html += '<div style="margin-top:20px; border-top:1px solid #cbd5e1; padding-top:15px; position:relative;">';
+                html += '<h4 style="margin:0 0 5px; font-size:13px; color:#1e293b;">🔍 Chercher une Cible Manuelle</h4>';
+                html += '<p style="font-size:11px; color:#64748b; margin:0 0 10px;">Renforcez le maillage en liant vers un article thématique.</p>';
+                html += '<input type="text" class="sil-search-target" data-source-id="' + postId + '" placeholder="Saisissez le titre d\'article cible..." style="width:100%; font-size:12px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;">';
+                html += '<div class="sil-search-results" style="display:none; max-height:180px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; position:absolute; width:100%; z-index:1000; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); border-radius:0 0 6px 6px; margin-top:-1px;"></div>';
+                html += '<div class="sil-anchor-suggestions" style="display:none; margin-top:12px; font-size:11px; padding:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">';
+                html += '<p style="color:#475569; margin:0 0 8px 0; font-weight:700; text-transform:uppercase; font-size:9px;">Ancres GSC / Suggestions :</p>';
+                html += '<div class="sil-chip-container" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>';
+                html += '<div style="border-top: 1px dashed #cbd5e1; padding-top:10px; display:flex; gap:8px;">';
+                html += '<button class="button button-primary sil-manual-bridge-trigger" id="sil-sidebar-manual-btn" data-source="' + postId + '" style="flex:1; font-size:10px;">🌉 Créer le prompt pour le pont</button>';
+                html += '</div>';
+                html += '</div>';
+                html += '</div>';
 
                 // Actions Footer
                 html += '<div style="margin-top:18px; border-top:1px solid #e2e8f0; padding-top:15px; display:flex; gap:8px;">';
@@ -639,17 +647,12 @@ jQuery(document).ready(function ($) {
                 if (d.view_url) html += '<a href="' + d.view_url + '" target="_blank" class="button" style="flex:1; text-align:center; text-decoration:none; font-size:12px;">\ud83d\udd17 Voir</a>';
                 html += '</div>';
 
-                // Manual Bridge creation
-                html += '<div style="margin-top:20px; border-top:1px solid #cbd5e1; padding-top:15px; position:relative;">';
-                html += '<h4 style="margin:0 0 5px; font-size:13px; color:#1e293b;">\ud83c\udf09 Cr\u00e9er un Pont S\u00e9mantique Manual</h4>';
-                html += '<p style="font-size:11px; color:#64748b; margin:0 0 10px;">Cherchez une cible th\u00e9matique pour renforcer le maillage.</p>';
-                html += '<input type="text" class="sil-search-target" data-source-id="' + postId + '" placeholder="Saisissez le titre d\'un article..." style="width:100%; font-size:12px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;">';
-                html += '<div class="sil-search-results" style="display:none; max-height:180px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; position:absolute; width:100%; z-index:1000; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); border-radius:0 0 6px 6px; margin-top:-1px;"></div>';
-                html += '<div class="sil-anchor-suggestions" style="display:none; margin-top:12px; font-size:11px; padding:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">';
-                html += '<p style="color:#475569; margin:0 0 8px 0; font-weight:700; text-transform:uppercase; font-size:9px;">Ancres sugg\u00e9r\u00e9es (GSC) :</p>';
-                html += '<div class="sil-chip-container" style="display:flex; flex-wrap:wrap; gap:6px;"></div>';
-                html += '</div>';
-                html += '</div>';
+                // --- NEW: MISSING INLINKS MODULE ---
+                html += '<div id="sil-missing-inlinks-container" style="margin-top:20px; padding-top:15px; border-top:1px solid #e2e8f0;">';
+                html += '<strong style="font-size:10px; text-transform:uppercase; color:#0f172a;">🎯 Opportunités de Maillage (Même Silo)</strong>';
+                html += '<div id="sil-missing-inlinks-list" style="margin-top:10px;">';
+                html += '<div class="spinner is-active" style="float:none; margin:10px auto; display:block;"></div>';
+                html += '</div></div>';
 
                 html += '</div>'; // End border-top wrapper
 
@@ -669,7 +672,7 @@ jQuery(document).ready(function ($) {
                                 <div style="font-weight:700; color:#1e293b; margin-bottom:5px;">${item.title}</div>
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
                                     <span style="color:#059669; font-weight:700;">Similarity: ${item.similarity}%</span>
-                                    <button class="button button-small sil-reco-bridge-btn" 
+                                    <button class="button button-small sil-reco-bridge-btn sil-manual-bridge-trigger" 
                                             data-source="${item.id}" 
                                             data-target="${postId}" 
                                             data-title="${nodeLabel.replace(/"/g,'&quot;')}" 
@@ -787,80 +790,65 @@ jQuery(document).ready(function ($) {
             }, function(response) {
                 if (response.success) {
                     const d = response.data;
-                    d.proximity = proximityScore; // Add it back to data
+                    d.proximity = proximityScore;
                 }
                 if (!response.success) {
-                    $content.html('<div style="padding:40px; text-align:center;" class="sil-staggered sil-staggered-1"><span style="font-size:32px;display:block;margin-bottom:16px;">🔍</span><p class="sil-premium-header" style="color:#ef4444; font-size:14px; letter-spacing:0.02em;">Désolé, impossible de charger le contexte :<br><span style="font-weight:400; font-family:\'DM Sans\'; opacity:0.8;">' + escapeHtml(response.data || 'Erreur inconnue') + '</span></p></div>');
+                    $content.html('<div class="sil-graph-error-box sil-staggered sil-staggered-1"><span>🔍</span><p>Désolé, impossible de charger le contexte :<br><span>' + escapeHtml(response.data || 'Erreur inconnue') + '</span></p></div>');
                     return;
                 }
                 const d = response.data;
 
                 let html = '<div style="padding:16px;">';
-                html += '<h4 class="sil-premium-header sil-staggered sil-staggered-1" style="margin:0 0 20px; font-size:18px; color:#0f172a; display:flex; align-items:center; gap:10px;">';
-                html += '<span style="background:#f1f5f9; padding:6px; border-radius:8px; font-size:16px;">🔍</span> Inspection du Lien</h4>';
+                html += '<h4 class="sil-premium-header sil-staggered sil-staggered-1">Inspection du Lien</h4>';
                 
-                // Connection Info (Glass Card)
-                html += '<div class="sil-glass-card sil-staggered sil-staggered-2" style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">';
-                html += '<div style="flex:1; text-align:right;"><small style="display:block; color:#64748b; font-size:10px; font-weight:700; text-transform:uppercase;">DE</small><strong style="font-size:12px; color:#334155;">' + escapeHtml(d.source_title) + '</strong></div>';
+                html += '<div class="sil-glass-card sil-staggered sil-staggered-2">';
+                html += '<div style="flex:1; text-align:right;"><small>DE</small><strong>' + escapeHtml(d.source_title) + '</strong></div>';
                 html += '<div style="color:#94a3b8; font-size:16px;">→</div>';
-                html += '<div style="flex:1;"><small style="display:block; color:#64748b; font-size:10px; font-weight:700; text-transform:uppercase;">VERS</small><strong style="font-size:12px; color:#334155;">' + escapeHtml(d.target_title) + '</strong></div>';
+                html += '<div style="flex:1;"><small>VERS</small><strong>' + escapeHtml(d.target_title) + '</strong></div>';
                 html += '</div>';
  
-                // Semantic Leak Alert
                 if (d.is_leak) {
                     const isSafe = d.leak_percent < d.leak_threshold;
                     const alertClass = isSafe ? 'sil-leak-safe' : 'sil-leak-danger';
                     const icon = isSafe ? '✨' : '⚠️';
                     const statusText = isSafe ? 'Fuite Tolérée' : 'Fuite Sémantique !';
 
-                    html += '<div class="sil-leak-alert sil-staggered sil-staggered-3 ' + alertClass + '" style="margin-bottom:20px;">';
-                    html += '<span style="font-size:22px;">' + icon + '</span>';
-                    html += '<div><strong style="display:block; font-size:14px; margin-bottom:2px;">' + statusText + ' (' + d.leak_percent + '%)</strong>';
-                    html += '<span style="font-size:11px; opacity:0.9;">Traversée : <strong>' + escapeHtml(d.source_silo_label) + '</strong> ➔ <strong>' + escapeHtml(d.target_silo_label) + '</strong></span><br>';
-                    html += '<small style="opacity:0.7; font-size:10px; font-weight:600;">SEUIL TOLÉRÉ : ' + d.leak_threshold + '%</small></div>';
+                    html += '<div class="sil-leak-alert sil-staggered sil-staggered-3 ' + alertClass + '">';
+                    html += '<span>' + icon + '</span>';
+                    html += '<div><strong>' + statusText + ' (' + d.leak_percent + '%)</strong>';
+                    html += '<span>Traversée : <strong>' + escapeHtml(d.source_silo_label) + '</strong> ➔ <strong>' + escapeHtml(d.target_silo_label) + '</strong></span>';
+                    html += '<small>SEUIL TOLÉRÉ : ' + d.leak_threshold + '%</small></div>';
                     html += '</div>';
                 } else {
-                    html += '<div class="sil-leak-alert sil-leak-safe sil-staggered sil-staggered-3" style="margin-bottom:20px;">';
-                    html += '<span style="font-size:22px;">🛡️</span>';
-                    html += '<div><strong style="display:block; font-size:14px; margin-bottom:2px;">Maillage Hermétique</strong>';
-                    html += '<span style="font-size:11px; opacity:0.9;">Ce lien reste à l\'intérieur du silo : <strong>' + escapeHtml(d.source_silo_label) + '</strong></span></div>';
+                    html += '<div class="sil-leak-alert sil-leak-safe sil-staggered sil-staggered-3">';
+                    html += '<span>🛡️</span>';
+                    html += '<div><strong>Maillage Hermétique</strong>';
+                    html += '<span>Ce lien reste à l\'intérieur du silo : <strong>' + escapeHtml(d.source_silo_label) + '</strong></span></div>';
                     html += '</div>';
                 }
   
-                // Semantic Proximity
-                html += '<div class="sil-staggered sil-staggered-4" style="background:rgba(248,250,252,0.5); border:1px solid #e2e8f0; border-radius:12px; padding:12px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">';
-                html += '<span style="font-size:11px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.03em;">Proximité Sémantique</span>';
+                html += '<div class="sil-staggered sil-staggered-4 sil-glass-card">';
+                html += '<span>Proximité Sémantique</span>';
                 html += '<div style="display:flex; align-items:center; gap:8px;">';
                 html += '<div style="width:80px; height:8px; background:#e2e8f0; border-radius:4px; overflow:hidden;"><div style="width:' + d.proximity + '%; height:100%; background:linear-gradient(90deg, #10b981, #3b82f6); border-radius:4px;"></div></div>';
-                html += '<strong style="font-size:13px; color:#1e293b;">' + d.proximity + '%</strong>';
+                html += '<strong>' + d.proximity + '%</strong>';
                 html += '</div></div>';
 
-                // Context & Anchor
-                html += '<div class="sil-glass-card sil-staggered sil-staggered-5" style="margin-bottom:20px; position:relative; overflow:hidden;">';
-                html += '<div style="position:absolute; top:0; left:0; width:4px; height:100%; background:#10b981;"></div>';
-                html += '<strong style="font-size:10px; text-transform:uppercase; color:#64748b; display:block; margin-bottom:10px; letter-spacing:0.05em;">Ancre et Contexte</strong>';
-                html += '<div style="font-size:13px; color:#334155; line-height:1.7; font-style:italic;">';
-                html += '"...' + escapeHtml(d.context_prev || '') + ' <span style="background:linear-gradient(120deg, #fef08a 0%, #fde047 100%); padding:2px 6px; border-radius:4px; font-weight:800; font-style:normal; color:#854d0e; box-shadow:0 2px 4px rgba(250,204,21,0.2);">' + escapeHtml(d.anchor) + '</span> ' + escapeHtml(d.context_next || '') + '..."';
-                html += '</div>';
+                html += '<div class="sil-glass-card sil-staggered sil-staggered-5">';
+                html += '<strong>Ancre et Contexte</strong>';
+                html += '<div>"' + escapeHtml(d.context_prev || '') + ' <span>' + escapeHtml(d.anchor) + '</span> ' + escapeHtml(d.context_next || '') + '..."</div>';
                 html += '</div>';
  
-                // Actions
-                html += '<div class="sil-staggered sil-staggered-6" style="display:flex; flex-direction:column; gap:4px;">';
-                
-                // Nofollow Toggle
+                html += '<div class="sil-staggered sil-staggered-6">';
                 const nfClass = d.is_nofollow ? 'button-primary' : '';
                 const nfText = d.is_nofollow ? '✨ Rel="nofollow" Actif' : '✋ Passer en nofollow';
                 html += '<button class="sil-action-btn sil-toggle-nofollow-btn" data-source="' + sourceId + '" data-target-url="' + escapeHtml(d.target_url) + '">' + nfText + '</button>';
-                
-                // Delete Link
                 html += '<button class="sil-action-btn sil-action-btn-danger sil-delete-link-edge-btn" data-source="' + sourceId + '" data-target-url="' + escapeHtml(d.target_url) + '">🗑️ Supprimer le lien</button>';
-                
                 html += '</div>';
  
-                // Navigation
-                html += '<div class="sil-staggered sil-staggered-7" style="margin-top:24px; border-top:1px solid #e2e8f0; padding-top:20px; display:flex; gap:10px;">';
-                if (d.source_edit_url) html += '<a href="' + escapeHtml(d.source_edit_url) + '" target="_blank" class="sil-action-btn" style="flex:1; text-decoration:none; margin-bottom:0;">Editer Source</a>';
-                if (d.target_edit_url) html += '<a href="' + escapeHtml(d.target_edit_url) + '" target="_blank" class="sil-action-btn" style="flex:1; text-decoration:none; margin-bottom:0;">Editer Cible</a>';
+                html += '<div class="sil-staggered sil-staggered-7">';
+                if (d.source_edit_url) html += '<a href="' + escapeHtml(d.source_edit_url) + '" target="_blank" class="sil-action-btn">Editer Source</a>';
+                if (d.target_edit_url) html += '<a href="' + escapeHtml(d.target_edit_url) + '" target="_blank" class="sil-action-btn">Editer Cible</a>';
                 html += '</div>';
  
                 html += '</div>';
@@ -892,9 +880,9 @@ jQuery(document).ready(function ($) {
                         '<button class="button button-primary sil-apply-seo-btn" data-post-id="' + postId + '" data-title="' + newTitle.replace(/"/g,'&quot;') + '" data-meta="' + newMeta.replace(/"/g,'&quot;') + '" style="font-size:12px;">\u2705 Appliquer</button>'
                     ).show();
                 } else {
-                    alert('Erreur IA : ' + (r.data || 'Inconnue'));
+                    window.silToast('Erreur IA : ' + (r.data || 'Inconnue'), 'error');
                 }
-            }).fail(() => { $btn.prop('disabled', false).text('\u2728 R\u00e9\u00e9crire Title/Meta via IA'); alert('Erreur r\u00e9seau.'); });
+            }).fail(() => { $btn.prop('disabled', false).text('\u2728 R\u00e9\u00e9crire Title/Meta via IA'); window.silToast('Erreur r\u00e9seau.', 'error'); });
         });
 
         $(document).on('click', '.sil-apply-seo-btn', function() {
@@ -911,7 +899,7 @@ jQuery(document).ready(function ($) {
                     $('#sil-seo-title-display').text($btn.data('title'));
                     $('#sil-seo-meta-display').text($btn.data('meta'));
                     $('#sil-seo-ai-result').html('<span style="color:#166534;">\u2705 SEO mis \u00e0 jour !</span>');
-                } else { alert('Erreur : ' + (r.data || 'Inconnue')); $btn.prop('disabled', false).text('\u2705 Appliquer'); }
+                } else { window.silToast('Erreur : ' + (r.data || 'Inconnue'), 'error'); $btn.prop('disabled', false).text('\u2705 Appliquer'); }
             });
         });
 
@@ -942,7 +930,7 @@ jQuery(document).ready(function ($) {
                         $btn.closest('li').fadeOut();
                     }
                 } else { 
-                    alert('Erreur : ' + (r.data || 'Inconnue')); 
+                    window.silToast('Erreur : ' + (r.data || 'Inconnue'), 'error'); 
                     $btn.prop('disabled', false).text(isEdgeBtn ? '🗑️ Supprimer' : '\u00d7'); 
                 }
             });
@@ -967,7 +955,7 @@ jQuery(document).ready(function ($) {
                         .toggleClass('button-primary', isNf)
                         .text(isNf ? '✅ Rel="nofollow" Actif' : '✋ Passer en nofollow');
                 } else {
-                    alert('Erreur : ' + (r.data || 'Inconnue'));
+                    window.silToast('Erreur : ' + (r.data || 'Inconnue'), 'error');
                     $btn.prop('disabled', false).text('✋ Réessayer');
                 }
             });
@@ -1049,6 +1037,16 @@ jQuery(document).ready(function ($) {
             $input.val(title);
             $container.find('.sil-search-results').hide();
 
+            // BMAD Fix: Sync target info to the Manual Bridge button
+            const $manualBtn = $container.find('#sil-sidebar-manual-btn');
+            if ($manualBtn.length) {
+                $manualBtn.attr('data-target', targetId);
+                $manualBtn.data('target', targetId);
+                $manualBtn.attr('data-title', title);
+                $manualBtn.data('title', title);
+                $manualBtn.addClass('sil-target-ready');
+            }
+
             const $anchors = $container.find('.sil-anchor-suggestions');
             const $chipContainer = $anchors.find('.sil-chip-container');
             $chipContainer.empty();
@@ -1060,7 +1058,6 @@ jQuery(document).ready(function ($) {
                 });
             } else {
                 $chipContainer.append('<small style="color:#64748b;display:block;width:100%;margin-bottom:8px;">Aucun mot-clé GSC trouvé.</small>');
-                $chipContainer.append(`<button class="button button-secondary sil-ai-invent-link-btn" data-source="${sourceId}" data-target="${targetId}">\ud83e\udd16 Inventer une ancre via IA</button>`);
             }
             $anchors.show();
         });
@@ -1082,42 +1079,23 @@ jQuery(document).ready(function ($) {
             }, function (response) {
                 if (response.success) {
                     $chip.remove();
-                    alert("Lien local ajouté ! (Actualisez le graphe pour voir la nouvelle flèche)");
+                    window.silToast("Lien local ajouté !", "success");
                 } else {
                     const errorMsg = `<div class="sil-inline-error" style="color:#b91c1c;background:#fef2f2;border:1px solid #f87171;padding:10px;margin-top:10px;border-radius:4px;font-size:11px;">
                         ⚠️ <strong>Impossible :</strong><br>${response.data}
-                        <div style="margin-top:8px;border-top:1px solid #fca5a5;padding-top:8px;">
-                            <button class="button button-primary sil-local-bridge-btn" data-source="${sourceId}" data-target="${targetId}" data-anchor="${anchor}">🌉 Créer un pont sémantique via IA</button>
+                        <div style="margin-top:8px;border-top:1px solid #fca5a5;padding-top:8px; display:flex; gap:5px;">
+                            <button class="button button-primary sil-manual-bridge-trigger" data-source="${sourceId}" data-target="${targetId}" data-anchor="${anchor}" style="flex:1; font-size:10px;">🌉 Créer le prompt pour le pont</button>
                         </div>
                     </div>`;
                     $chip.closest('.sil-anchor-suggestions').append(errorMsg);
                     $chip.css('opacity', '1').css('pointer-events', 'auto');
                 }
             }).fail(function() {
-                alert("Erreur réseau");
+                window.silToast("Erreur réseau", "error");
                 $chip.css('opacity', '1').css('pointer-events', 'auto');
             });
         });
 
-        $(document).on('click', '.sil-ai-invent-link-btn', function (e) {
-            e.preventDefault();
-            const $btn = $(this);
-            $btn.prop('disabled', true).text('⏳...');
-            $.post(silSharedData.ajaxurl || ajaxurl, {
-                action: 'sil_invent_anchor_and_link',
-                source_id: $btn.data('source'),
-                target_id: $btn.data('target'),
-                nonce: silSharedData.nonce
-            }, function (r) {
-                if (r.success) {
-                    alert("Lien inventé et inséré !");
-                    $btn.hide();
-                } else {
-                    alert("Erreur IA: " + r.data);
-                    $btn.prop('disabled', false).text('🤖 Inventer une ancre via IA');
-                }
-            });
-        });
         $(document).on('click', '.sil-seal-btn', function() {
             const $btn = $(this);
             const sourceId = $btn.data('source');
@@ -1140,7 +1118,7 @@ jQuery(document).ready(function ($) {
                         node.style({ 'border-style': 'solid', 'border-color': '#10b981' });
                     }
                 } else {
-                    alert(res.data || 'Erreur lors du scellage');
+                    window.silToast(res.data || 'Erreur lors du scellage', "error");
                     $btn.prop('disabled', false).text('🚀 Réessayer le Scellage');
                 }
             });
@@ -1178,8 +1156,7 @@ jQuery(document).ready(function ($) {
                             $chipContainer.append(`<span class="sil-anchor-chip" data-source-id="${sourceId}" data-target-id="${targetId}" data-anchor="${kwEscaped}" style="background:#e0f2fe;color:#0369a1;padding:3px 8px;border-radius:12px;cursor:pointer;border:1px solid #bae6fd;">${kw}</span>`);
                         });
                     } else {
-                        $chipContainer.append('<small style="color:#64748b;display:block;width:100%;margin-bottom:8px;">Aucun mot-cl\u00e9 GSC trouv\u00e9.</small>');
-                        $chipContainer.append(`<button class="button button-secondary sil-ai-invent-link-btn" data-source="${sourceId}" data-target="${targetId}">\ud83e\udd16 Inventer une ancre via IA</button>`);
+                        $chipContainer.append('<small style="color:#64748b;display:block;width:100%;margin-bottom:8px;">Aucun mot-clé GSC trouvé.</small>');
                     }
                     $anchors.show();
                     // Scroll vers le bas
@@ -1188,21 +1165,19 @@ jQuery(document).ready(function ($) {
             });
         });
 
-        $(document).on('click', '.sil-local-bridge-btn', function () {
+        $(document).on('click', '.sil-manual-bridge-trigger, .sil-create-bridge-btn, .sil-local-bridge-btn', function () {
             const $btn = $(this);
             const sourceId = $btn.data('source');
             const targetId = $btn.data('target');
             const anchorText = $btn.data('anchor');
             
-            if (window.SIL_Bridge) {
-                window.SIL_Bridge.generate(sourceId, targetId, anchorText, $btn);
-            } else {
-                console.error('SIL_Bridge not found');
+            if (window.silFetchAndShowBridgePrompt) {
+                window.silFetchAndShowBridgePrompt(sourceId, targetId, anchorText);
             }
         });
 
         $(document).on('sil_bridge_applied', function(e, sourceId, targetId) {
-            alert('Pont inséré avec succès ! (Actualisez le graphe pour voir la flèche)');
+            window.silToast('Pont inséré avec succès !', 'success');
             // Note: In the future, we could trigger a local node refresh here if cy is available
         });
     // End of Document event handlers
@@ -1214,10 +1189,11 @@ jQuery(document).ready(function ($) {
             displayMsg = (msg.message || 'Erreur inconnue') + 
                          (msg.file ? '<br><small>Fichier: ' + msg.file + ' (Ligne ' + msg.line + ')</small>' : '');
         }
-        $container.html('<div style="padding:30px;text-align:center;color:#b91c1c;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;"><strong>\u26a0\ufe0f \u00c9chec :</strong><br>' + displayMsg + '<br><br><button class="button sil-retry-btn">R\u00e9essayer</button></div>');
+        $container.html('<div class="sil-graph-error-box"><strong>⚠️ Échec :</strong><br>' + displayMsg + '<br><br><button class="button sil-retry-btn">Réessayer</button></div>');
         $('.sil-retry-btn').on('click', function(e) {
             e.preventDefault();
             location.reload();
         });
     }
 });
+})(jQuery);

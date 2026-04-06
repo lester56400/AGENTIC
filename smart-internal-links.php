@@ -2,7 +2,7 @@
 /**
  * Plugin Name: _Smart Internal Links
  * Description: Génère automatiquement des liens internes pertinents grâce aux embeddings et OpenAI. Supporte Articles et Pages.
- * Version: 2.5.2
+ * Version: 2.5.4
  * Author: Jennifer Larcher
  * Author URI: https://redactiwe.systeme.io/formation-redacteur-ia
  * Text Domain: smart-internal-links
@@ -22,9 +22,10 @@ class SmartInternalLinks
     private static $instance = null;
     public $table_name;
     private $api_key;
-    private $db_manager;
     public $semantic_silos;
     public $renderer;
+    public $scanner;
+    public $pilot_engine;
 
     // Types de contenus supportés (Blog + Pages produits/services)
     public $post_types = ['post', 'page'];
@@ -73,7 +74,6 @@ class SmartInternalLinks
         add_action('wp_ajax_sil_generate_bridge_prompt', [$ajax_handler, 'sil_generate_bridge_prompt']);
         add_action('wp_ajax_sil_apply_anchor_context', [$ajax_handler, 'sil_apply_anchor_context']);
         add_action('wp_ajax_sil_generate_seo_meta', [$ajax_handler, 'sil_generate_seo_meta']);
-        add_action('wp_ajax_sil_invent_anchor_and_link', [$ajax_handler, 'sil_invent_anchor_and_link']);
         add_action('wp_ajax_sil_get_content_gap', [$ajax_handler, 'sil_get_content_gap_data']);
 
         // --- BMAD 1-E : Alias pour la création de pont sémantique ---
@@ -101,6 +101,7 @@ class SmartInternalLinks
 
         add_action('transition_post_status', [$this, 'on_post_first_publish'], 10, 3);
         add_action('save_post', [$this, 'on_save_post'], 10, 3);
+        add_action('save_post', [$this, 'auto_validate_scheduled_links'], 10, 3);
         add_action('admin_notices', [$this, 'display_suggestions_notice']);
 
 
@@ -115,9 +116,11 @@ class SmartInternalLinks
         require_once plugin_dir_path(__FILE__) . 'includes/class-sil-semantic-silos.php';
         require_once plugin_dir_path(__FILE__) . 'includes/class-sil-action-logger.php';
         require_once plugin_dir_path(__FILE__) . 'includes/class-sil-pilot-engine.php';
+        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-scanner.php';
 
         $this->db_manager     = new SIL_Database_Manager();
         $this->semantic_silos = new SIL_Semantic_Silos();
+        $this->scanner        = new SIL_Scanner($this);
         $this->pilot_engine   = new SIL_Pilot_Engine($this);
 
         add_action('sil_gsc_daily_sync', function () {
@@ -347,6 +350,9 @@ class SmartInternalLinks
             return;
         }
 
+        // 1. Google Fonts: Fira Sans (UI) & Fira Code (Data)
+        wp_enqueue_style('sil-google-fonts', 'https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&family=Fira+Sans:wght@400;600;700&display=swap', [], null);
+
         // 2. CSS Global Admin
         wp_enqueue_style('sil-admin', plugin_dir_url(__FILE__) . 'assets/admin.css', [], SIL_VERSION);
 
@@ -380,11 +386,13 @@ class SmartInternalLinks
         $shared_data = [
             'ajaxurl'             => admin_url( 'admin-ajax.php' ),
             'nonce'               => wp_create_nonce( 'sil_nonce' ),
+            'admin_nonce'         => wp_create_nonce( 'sil_admin_nonce' ),
             'siteUrl'             => get_site_url(),
             'restUrl'             => esc_url_raw(rest_url('sil/v1/graph-data')),
             'rest_nonce'          => wp_create_nonce('wp_rest'),
             'home_url'            => home_url('/'),
             'admin_url'           => admin_url('admin.php'),
+            'post_edit_base'      => admin_url('post.php'),
             'maxClicks'           => 100,
             'target_permeability' => get_option('sil_target_permeability', 20),
             'repulsion'           => get_option('sil_node_repulsion', 300000),
@@ -403,13 +411,17 @@ class SmartInternalLinks
                 'lightbulb' => SIL_Icons::get_icon('lightbulb', ['size' => 14]),
                 'bridge'    => SIL_Icons::get_icon('bridge', ['size' => 14]),
                 'anchor'    => SIL_Icons::get_icon('anchor', ['size' => 14]),
+                'bot'       => SIL_Icons::get_icon('bot', ['size' => 14]),
+                'wand'      => SIL_Icons::get_icon('wand', ['size' => 14]),
+                'sparkles'  => SIL_Icons::get_icon('sparkles', ['size' => 14]),
+                'trending_down' => SIL_Icons::get_icon('trending-down', ['size' => 14]),
             ]
         ];
 
         wp_localize_script( 'sil-admin-js', 'silSharedData', $shared_data );
         wp_localize_script( 'sil-graph-js', 'silSharedData', $shared_data );
         wp_localize_script( 'sil-pilot-center-js', 'silSharedData', $shared_data );
-        wp_localize_script( 'sil-bridge-manager-js', 'silSharedData', $shared_data );
+        wp_localize_script( 'sil-bridge-manager', 'silSharedData', $shared_data );
     }
 
     // ==============================================
@@ -1672,6 +1684,40 @@ RÈGLES STRICTES :
 
         wp_redirect(admin_url('admin.php?page=smart-internal-links-settings&gsc_auth=disconnected'));
         exit;
+    }
+
+    /**
+     * Vérifie si un lien programmé a été inséré manuellement lors de la sauvegarde.
+     */
+    public function auto_validate_scheduled_links($post_id, $post, $update)
+    {
+        if (wp_is_post_revision($post_id) || !$update) return;
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'sil_scheduled_links';
+
+        // Vérification silencieuse de l'existence de la table
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table'") != $table) return;
+
+        // Cherche les tâches en attente pour cet article
+        $pending = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, target_id FROM $table WHERE source_id = %d AND status = 'pending'",
+            $post_id
+        ));
+
+        if (empty($pending)) return;
+
+        foreach ($pending as $link) {
+            $target_url = get_permalink($link->target_id);
+            $escaped_url = preg_quote($target_url, '/');
+            $relative_url = wp_make_link_relative($target_url);
+
+            // Si le lien est trouvé dans le contenu, on valide la tâche
+            if (preg_match('/href=["\'](' . $escaped_url . '|' . preg_quote($relative_url, '/') . ')["\']/i', $post->post_content)) {
+                $wpdb->update($table, ['status' => 'completed'], ['id' => $link->id], ['%s'], ['%d']);
+            }
+        }
     }
 }
 require_once plugin_dir_path(__FILE__) . 'includes/class-sil-cluster-analysis.php';

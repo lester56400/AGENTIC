@@ -441,7 +441,10 @@ endif;
 								<th><label for="sil_openai_bridge_prompt">Prompt IA (Pont Sémantique)</label></th>
 								<td>
 									<textarea id="sil_openai_bridge_prompt" name="sil_openai_bridge_prompt" class="large-text" rows="4"><?php echo function_exists( 'esc_textarea' ) ? esc_textarea( get_option( 'sil_openai_bridge_prompt' ) ) : esc_html( get_option( 'sil_openai_bridge_prompt' ) ); ?></textarea>
-									<p class="description">Prompt système utilisé pour l'invention d'ancres et la rédaction de ponts sémantiques entre deux contenus.</p>
+									<p class="description">
+										Prompt système utilisé pour l'invention d'ancres et la rédaction de ponts sémantiques.<br />
+										<b>Variables disponibles :</b> <code>{{link}}</code> (lien complet), <code>{{anchor}}</code>, <code>{{url}}</code>, <code>{{source_title}}</code>, <code>{{target_title}}</code>.
+									</p>
 								</td>
 							</tr>
 							<tr>
@@ -713,7 +716,7 @@ endif;
 									<?php else : ?>
 											<span style="color: #ea580c; font-weight: bold;">❌ Non connecté</span>
 											<?php if ( $has_credentials ) : ?>
-													<a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=sil_gsc_oauth_redirect' ) ); ?>"
+													<a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=sil_gsc_oauth_redirect&nonce=' . wp_create_nonce( 'sil_nonce' ) ) ); ?>"
 														class="button button-primary" style="margin-left: 10px;">Se connecter à Google
 														Search Console</a>
 											<?php else : ?>
