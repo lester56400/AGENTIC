@@ -1181,47 +1181,32 @@ class SIL_Ajax_Handler
         $original_text = wp_unslash($_POST['original_text']);
         $final_text = wp_unslash($_POST['final_text']);
 
-        // --- NETTOYAGE ET SÉCURITÉ GUTENBERG (v2.6.1) ---
-        if (!empty($final_text)) {
-            // 1. Suppression des sauts de ligne physiques (\n) qui cassent Gutenberg
-            $final_text = str_replace(["\r\n", "\r", "\n"], ' ', $final_text);
-            
-            // 2. Fusion des multiples paragraphes en UN SEUL (via <br />)
-            // On cherche </p><p> ou </p> <p> et on remplace par <br />
-            $final_text = preg_replace('/<\/p>\s*<p[^>]*>/i', '<br />', $final_text);
-            
-            // 3. Extraction du contenu interne si l'IA a mis des balises <p> en trop
-            // On veut garder UN SEUL bloc <!-- wp:paragraph -->
-            if (strpos($final_text, '<!-- wp:') === false) {
-                $inner_content = preg_replace('/^<p[^>]*>|<\/p>$/i', '', trim($final_text)); // Retire les <p> extrêmes
-                $final_text = "<!-- wp:paragraph -->\n<p>" . $inner_content . "</p>\n<!-- /wp:paragraph -->";
-            } else {
-                // If it already has blocks, we just normalize whitespace
-                $final_text = trim($final_text);
-            }
-
-            // Validation HTML Syntax
-            $text_for_validation = $inner_content;
-            $dom = new DOMDocument();
-            libxml_use_internal_errors(true);
-            $html_wrapper = '<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>' . $text_for_validation . '</body></html>';
-            $dom->loadHTML($html_wrapper, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-            $critical_errors = array_filter(libxml_get_errors(), function($e) { return $e->level === LIBXML_ERR_FATAL; });
-            libxml_clear_errors();
-            
-            if (!empty($critical_errors)) {
-                wp_send_json_error("Syntaxe HTML invalide renvoyée par l'IA.");
-                return;
-            }
-
-            if (strpos($final_text, '<a') === false) {
-                wp_send_json_error("Le lien HTML <a> a été perdu durant la réécriture.");
-                return;
-            }
+        // Validation HTML Syntax (on the raw output from IA, before Gutenberg wrapping)
+        $text_for_validation = str_replace(["\r\n", "\r", "\n"], ' ', $final_text);
+        $text_for_validation = preg_replace('/<\/p>\s*<p[^>]*>/i', '<br />', $text_for_validation);
+        $inner_content_raw = preg_replace('/^<p[^>]*>|<\/p>$/i', '', trim($text_for_validation));
+        
+        $dom = new DOMDocument();
+        libxml_use_internal_errors(true);
+        $html_wrapper = '<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>' . $inner_content_raw . '</body></html>';
+        $dom->loadHTML($html_wrapper, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $critical_errors = array_filter(libxml_get_errors(), function($e) { return $e->level === LIBXML_ERR_FATAL; });
+        libxml_clear_errors();
+        
+        if (!empty($critical_errors)) {
+            wp_send_json_error("Syntaxe HTML invalide renvoyée par l'IA.");
+            return;
         }
+
+        if (strpos($final_text, '<a') === false) {
+            wp_send_json_error("Le lien HTML <a> a été perdu durant la réécriture.");
+            return;
+        }
+
 
         if (!current_user_can('unfiltered_html')) {
             $final_text = wp_kses_post($final_text);
+            $inner_content_raw = wp_kses_post($inner_content_raw);
         }
 
         $post = get_post($post_id);
@@ -1233,32 +1218,61 @@ class SIL_Ajax_Handler
             return;
         }
 
-        // Surgical replacement (Limit 1)
         $new_content = $haystack;
         $pos = strpos($haystack, $needle);
+        $found_needle = false;
+        
+        // Surgical replacement (Limit 1)
         if ($pos !== false) {
-            $new_content = substr_replace($haystack, $final_text, $pos, strlen($needle));
-        }
-
-        // Fallback robust matching (Entités, espaces, quotes)
-        if ($new_content === $haystack) {
+             $found_needle = $needle;
+        } else {
+             // Fallback robust matching (Entités, espaces, quotes)
             $needle_clean = html_entity_decode($needle, ENT_QUOTES, 'UTF-8');
-            // On essaie une version plus permissive du haystack
             $haystack_decoded = html_entity_decode($haystack, ENT_QUOTES, 'UTF-8');
             
-            $pos = mb_strpos($haystack_decoded, $needle_clean, 0, 'UTF-8');
-            if ($pos !== false) {
-                // Si trouvé en décodé, on utilise une regex sur le haystack original
+            $pos_decoded = mb_strpos($haystack_decoded, $needle_clean, 0, 'UTF-8');
+            if ($pos_decoded !== false) {
                 $regex_needle = preg_quote($needle_clean, '/');
                 $regex_needle = str_replace(["'", '"'], ["(?:'|&rsquo;|&apos;|&#039;)", '(?:"|&quot;|&#034;)'], $regex_needle);
-                $new_content = preg_replace('/' . $regex_needle . '/us', $final_text, $haystack, 1);
+                // We need the ACTUAL matched string in haystack to check its surroundings.
+                if (preg_match('/' . $regex_needle . '/us', $haystack, $matches, PREG_OFFSET_CAPTURE)) {
+                    $found_needle = $matches[0][0];
+                    $pos = $matches[0][1];
+                }
             }
         }
 
-        if ($new_content === $haystack) {
-            wp_send_json_error('Le paragraphe original n\'a pas pu être localisé dans le contenu (possible divergence de formatage ou entités HTML). Le lien n\'a pas été inséré.');
-            return;
+        if ($found_needle === false) {
+             wp_send_json_error('Le paragraphe original n\'a pas pu être localisé dans le contenu (possible divergence de formatage ou entités HTML). Le lien n\'a pas été inséré.');
+             return;
         }
+        
+        // Now check if the needle is already wrapped in a Gutenberg paragraph block block.
+        // We look backwards from $pos to see if there's an opening tag before another closing tag.
+        $text_before = substr($haystack, 0, $pos);
+        $last_wp_open = strrpos($text_before, '<!-- wp:paragraph -->');
+        $last_wp_close = strrpos($text_before, '<!-- /wp:paragraph -->');
+        
+        $is_wrapped = false;
+        $replace_start = $pos;
+        $replace_length = strlen($found_needle);
+        
+        if ($last_wp_open !== false && ($last_wp_close === false || $last_wp_open > $last_wp_close)) {
+             // It's inside a block! Let's find the closing tag.
+             $text_after = substr($haystack, $pos + strlen($found_needle));
+             $next_wp_close = strpos($text_after, '<!-- /wp:paragraph -->');
+             if ($next_wp_close !== false) {
+                 $is_wrapped = true;
+                 $replace_start = $last_wp_open;
+                 $replace_length = ($pos + strlen($found_needle) + $next_wp_close + strlen('<!-- /wp:paragraph -->')) - $last_wp_open;
+             }
+        }
+
+        // Prepare the final replacement string.
+        $replacement = "<!-- wp:paragraph -->\n<p>" . $inner_content_raw . "</p>\n<!-- /wp:paragraph -->";
+        
+        $new_content = substr_replace($haystack, $replacement, $replace_start, $replace_length);
+
 
         wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
 
