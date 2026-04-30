@@ -35,6 +35,35 @@ class SIL_Ajax_Handler
     }
 
     /**
+     * Get hierarchy info for a post (category for posts, parent page for pages).
+     *
+     * @param int $post_id The post ID.
+     * @return array Associative array with 'category' and/or 'parent_page' keys.
+     */
+    private function get_post_hierarchy($post_id)
+    {
+        $hierarchy = [];
+        $post_type = get_post_type($post_id);
+
+        if ($post_type === 'post') {
+            $categories = get_the_category($post_id);
+            if (!empty($categories)) {
+                $hierarchy['category'] = $categories[0]->name;
+                $hierarchy['category_id'] = $categories[0]->term_id;
+            }
+        } elseif ($post_type === 'page') {
+            $parent_id = wp_get_post_parent_id($post_id);
+            if ($parent_id) {
+                $hierarchy['parent_page'] = wp_specialchars_decode(get_the_title($parent_id), ENT_QUOTES);
+                $hierarchy['parent_page_id'] = $parent_id;
+            }
+        }
+
+        $hierarchy['post_type'] = $post_type;
+        return $hierarchy;
+    }
+
+    /**
      * Register AJAX hooks.
      */
     public function init()
@@ -63,7 +92,10 @@ class SIL_Ajax_Handler
         // --- GSC & Pilotage ---
         add_action('wp_ajax_sil_force_gsc_sync_batch', [$this, 'sil_process_batch']);
         add_action('wp_ajax_sil_get_all_ids_for_gsc_sync', [$this->main, 'ajax_get_all_ids_for_gsc_sync']);
+        add_action('wp_ajax_sil_fix_siphon', [$this, 'sil_fix_siphon']);
+        add_action('wp_ajax_sil_repatriate_intruder', [$this, 'sil_repatriate_intruder']);
         add_action('wp_ajax_sil_get_pilotage_actions', [$this, 'sil_get_pilotage_actions']);
+        add_action('wp_ajax_sil_get_pilotage_diagnostics', [$this, 'sil_get_pilotage_diagnostics']);
         add_action('wp_ajax_sil_log_manual_action', [$this, 'sil_log_manual_action']);
         add_action('wp_ajax_sil_get_action_logs', [$this, 'sil_get_action_logs']);
         add_action('wp_ajax_sil_get_orphan_adoption_info', [$this, 'sil_get_orphan_adoption_info']);
@@ -72,16 +104,20 @@ class SIL_Ajax_Handler
         // --- AI & Semantic ---
         add_action('wp_ajax_sil_ai_seo_rewrite', [$this, 'sil_ai_seo_rewrite']);
         add_action('wp_ajax_sil_generate_bridge_prompt', [$this, 'sil_generate_bridge_prompt']);
+        add_action('wp_ajax_sil_generate_stabilize_prompt', [$this, 'sil_generate_stabilize_prompt']);
         add_action('wp_ajax_sil_apply_anchor_context', [$this, 'sil_apply_anchor_context']);
+        add_action('wp_ajax_sil_generate_seo_meta', [$this, 'sil_generate_seo_meta']);
         add_action('wp_ajax_sil_get_missing_inlinks', [$this, 'sil_get_missing_inlinks']);
         add_action('wp_ajax_sil_rebuild_semantic_silos', [$this, 'sil_rebuild_semantic_silos']);
         add_action('wp_ajax_sil_seal_reciprocal_link', [$this, 'sil_seal_reciprocal_link']);
         add_action('wp_ajax_sil_run_semantic_audit', [$this, 'sil_run_semantic_audit']);
+        add_action('wp_ajax_sil_create_semantic_bridge', [$this, 'sil_generate_bridge_prompt']); // Alias
         
         // --- Settings & Metadata ---
         add_action('wp_ajax_sil_save_cornerstone', [$this, 'sil_save_settings']);
         add_action('wp_ajax_sil_update_seo_meta', [$this, 'sil_update_seo_meta']);
         add_action('wp_ajax_sil_search_posts_for_link', [$this, 'sil_search_posts_for_link']);
+        add_action('wp_ajax_sil_search_posts', [$this, 'sil_search_posts']);
         add_action('wp_ajax_sil_save_checklist_item', [$this->main, 'ajax_save_checklist_item']);
         
         // --- System & Tests ---
@@ -89,9 +125,21 @@ class SIL_Ajax_Handler
         add_action('wp_ajax_sil_get_indexing_status', [$this, 'sil_get_indexing_status']);
         add_action('wp_ajax_sil_run_system_diagnostic', [$this, 'sil_run_system_diagnostic']);
         add_action('wp_ajax_sil_run_deep_unit_tests', [$this, 'sil_run_deep_unit_tests']);
+        add_action('wp_ajax_sil_run_bridge_tests', [$this, 'sil_run_bridge_tests']);
         
         // --- V17 Arsenal ---
         add_action('wp_ajax_sil_v17_expert_action', [$this, 'sil_v17_expert_action']);
+        
+        // --- HTML Integrity ---
+        add_action('wp_ajax_sil_purge_integrity_audit', [$this, 'sil_purge_integrity_audit']);
+        add_action('wp_ajax_sil_scan_html_integrity', [$this, 'sil_scan_html_integrity']);
+        add_action('wp_ajax_sil_get_corrupted_posts', [$this, 'sil_get_corrupted_posts']);
+
+        // --- Incubateur de Liens (v2.6) ---
+        add_action('wp_ajax_sil_schedule_link', [$this, 'sil_schedule_link']);
+        add_action('wp_ajax_sil_get_scheduled_links', [$this, 'sil_get_scheduled_links']);
+        add_action('wp_ajax_sil_delete_scheduled_link', [$this, 'sil_delete_scheduled_link']);
+        add_action('wp_ajax_sil_complete_scheduled_link', [$this, 'sil_complete_scheduled_link']);
 
         // --- Tracking ---
         add_action('wp_ajax_sil_track_click', [$this, 'sil_track_click']);
@@ -99,6 +147,20 @@ class SIL_Ajax_Handler
 
         // --- GSC Analysis (Content Gap) ---
         add_action('wp_ajax_sil_get_content_gap_data', [$this, 'sil_get_content_gap_data']);
+        add_action('wp_ajax_sil_get_content_gap', [$this, 'sil_get_content_gap_data']); // Alias
+        add_action('wp_ajax_sil_find_semantic_sources', [$this, 'sil_find_semantic_sources']);
+
+        // --- V10 Micro-Embeddings ---
+        add_action('wp_ajax_sil_get_best_paragraph', [$this, 'sil_get_best_paragraph']);
+
+        // --- Phase 2.7 : Stateful Silo Pipeline ---
+        add_action('wp_ajax_sil_rebuild_silos_step_init', [$this, 'sil_rebuild_silos_step_init']);
+        add_action('wp_ajax_sil_rebuild_silos_step_iterate', [$this, 'sil_rebuild_silos_step_iterate']);
+        add_action('wp_ajax_sil_rebuild_silos_step_finalize', [$this, 'sil_rebuild_silos_step_finalize']);
+
+        // --- Phase 2.6 : Entity Extraction ---
+        add_action('wp_ajax_sil_extract_entities', [$this, 'sil_extract_entities']);
+
     }
 
     /**
@@ -312,6 +374,10 @@ class SIL_Ajax_Handler
                 wp_update_post(['ID' => $candidate_id, 'post_content' => $candidate_content]);
                 $count++;
             }
+        }
+
+        if ($count > 0) {
+            update_post_meta($post_id, '_sil_last_boost_timestamp', time());
         }
 
 
@@ -596,7 +662,8 @@ class SIL_Ajax_Handler
         $closest_content_title = '';
 
         $embedding = get_post_meta($post_id, '_sil_embedding', true);
-        $cluster_id = get_post_meta($post_id, '_sil_cluster_id', true);
+        $table_membership = $wpdb->prefix . 'sil_silo_membership';
+        $cluster_id = $wpdb->get_var($wpdb->prepare("SELECT silo_id FROM $table_membership WHERE post_id = %d AND is_primary = 1", $post_id));
         
         $proximity = 1.0;
 
@@ -605,7 +672,7 @@ class SIL_Ajax_Handler
             
             // Calculate cluster barycenter to verify representativeness
             $cluster_posts = $wpdb->get_results($wpdb->prepare(
-                "SELECT post_id FROM $wpdb->postmeta WHERE meta_key = '_sil_cluster_id' AND meta_value = %s",
+                "SELECT post_id FROM $table_membership WHERE silo_id = %d AND is_primary = 1",
                 $cluster_id
             ));
             
@@ -634,7 +701,7 @@ class SIL_Ajax_Handler
                 
                 // Find top 3 candidates outside the current silo (limit 150 for perf)
                 $candidates_raw = $wpdb->get_results($wpdb->prepare(
-                    "SELECT post_id FROM $wpdb->postmeta WHERE meta_key = '_sil_cluster_id' AND meta_value != %s LIMIT 150",
+                    "SELECT post_id FROM $table_membership WHERE silo_id != %d AND is_primary = 1 LIMIT 150",
                     $cluster_id
                 ));
 
@@ -666,12 +733,12 @@ class SIL_Ajax_Handler
                         if ($count === 0) {
                             $closest_content_id = $reco_id;
                             $closest_content_title = $reco_title;
-                            $recommended_silo_id = get_post_meta($reco_id, '_sil_cluster_id', true);
+                            $recommended_silo_id = $wpdb->get_var($wpdb->prepare("SELECT silo_id FROM $table_membership WHERE post_id = %d AND is_primary = 1", $reco_id));
                             
                             // Determine Silo name from common category
                             $recommended_silo_name = "Silo " . $recommended_silo_id;
                             $silo_posts = $wpdb->get_results($wpdb->prepare(
-                                "SELECT post_id FROM $wpdb->postmeta WHERE meta_key = '_sil_cluster_id' AND meta_value = %s LIMIT 20",
+                                "SELECT post_id FROM $table_membership WHERE silo_id = %d AND is_primary = 1 LIMIT 20",
                                 $recommended_silo_id
                             ));
                             $cats = [];
@@ -779,6 +846,23 @@ class SIL_Ajax_Handler
         $post_types = $this->main->get_post_types();
         $post_types_sql = "'" . implode("','", array_map('esc_sql', $post_types)) . "'";
 
+        $hybrid_results = [];
+        $seen_ids = [];
+
+        // --- 0. ID Search: if input is numeric, prioritize exact ID match ---
+        if (is_numeric(trim($search))) {
+            $id_post = get_post(intval($search));
+            if ($id_post && in_array($id_post->post_type, $post_types) && $id_post->post_status === 'publish') {
+                $hybrid_results[$id_post->ID] = [
+                    'id' => $id_post->ID,
+                    'title' => wp_specialchars_decode($id_post->post_title, ENT_QUOTES),
+                    'confidence' => 100,
+                    'match_type' => 'id'
+                ];
+                $seen_ids[] = $id_post->ID;
+            }
+        }
+
         // --- 1. Keyword Search (SQL Multi-Term) - High Priority ---
         $words = explode(' ', $search);
         $words = array_filter($words, function($w) { return strlen($w) >= 2; });
@@ -795,10 +879,8 @@ class SIL_Ajax_Handler
 
         $keyword_results = $wpdb->get_results($sql);
 
-        $hybrid_results = [];
-        $seen_ids = [];
-
         foreach ($keyword_results as $p) {
+            if (in_array($p->ID, $seen_ids)) continue;
             $hybrid_results[$p->ID] = [
                 'id' => $p->ID,
                 'title' => wp_specialchars_decode($p->post_title, ENT_QUOTES),
@@ -811,6 +893,9 @@ class SIL_Ajax_Handler
         // --- 2. Semantic Search (Vector) - AI Discovery ---
         $api_key = get_option('sil_openai_api_key');
         if (!empty($api_key) && strlen($search) >= 3) {
+            // Trigger lazy loader to ensure class is required
+            $this->main->centrality_engine; 
+            
             $query_embeddings = \SIL_Centrality_Engine::batch_get_embeddings([$search], $api_key);
             if (!empty($query_embeddings)) {
                 $query_vec = $query_embeddings[0];
@@ -857,15 +942,16 @@ class SIL_Ajax_Handler
             $perf = $gsc_performance[$pid] ?? ['impressions' => 0];
             $imps = intval($perf['impressions']);
 
-            $results[] = [
-                'id' => $pid,
-                'title' => $data['title'],
-                'confidence' => $data['confidence'],
-                'match_type' => $data['match_type'],
+            $results[] = array_merge([
+                'id'           => $pid,
+                'title'        => $data['title'],
+                'confidence'   => $data['confidence'],
+                'match_type'   => $data['match_type'],
                 'is_megaphone' => $imps >= $megaphone_threshold,
-                'impressions' => $imps,
-                'url' => get_permalink($pid)
-            ];
+                'impressions'  => $imps,
+                'url'          => get_permalink($pid),
+                'keywords'     => \SIL_SEO_Utils::get_post_keywords($pid)
+            ], $this->get_post_hierarchy($pid));
         }
 
         wp_send_json_success($results);
@@ -903,7 +989,7 @@ class SIL_Ajax_Handler
 
         // Pattern qui cherche le texte uniquement s'il n'est pas déjà dans un lien <a> ou un titre <hX>
         $quoted_anchor = preg_quote($anchor, '/');
-        $pattern = '/(?<!<a[^>]*>)(?<!<h[1-6][^>]*>)\b' . $quoted_anchor . '\b(?![^<]*<\/a>)(?![^<]*<\/h[1-6]>)/i';
+        $pattern = '/(?<!<a[^>]*>)(?<!<h[1-6][^>]*>)\b' . $quoted_anchor . '\b(?![^<]*<\/a>)(?![^<]*<\/h[1-6]>)/iu';
 
         $new_content = preg_replace($pattern, '<a href="' . esc_url($target_url) . '">' . $anchor . '</a>', $content, 1, $count);
 
@@ -928,10 +1014,11 @@ class SIL_Ajax_Handler
             ['%d', '%d', '%s', '%s']
         );
 
-        // ROI Logging — Actions from Cartographie now appear in Journal
         if (class_exists('SIL_Action_Logger')) {
             SIL_Action_Logger::log_action('link_map', $source_id, $target_id, ['anchor' => $anchor]);
         }
+
+        update_post_meta($target_id, '_sil_last_boost_timestamp', time());
 
         $this->main->clear_graph_cache();
         wp_send_json_success('Lien ajouté avec succès');
@@ -984,7 +1071,7 @@ class SIL_Ajax_Handler
         $sealed = false;
         foreach ($anchors as $anchor) {
             $quoted_anchor = preg_quote($anchor, '/');
-            $pattern = '/(?<!<a[^>]*>)(?<!<h[1-6][^>]*>)\b' . $quoted_anchor . '\b(?![^<]*<\/a>)(?![^<]*<\/h[1-6]>)/i';
+            $pattern = '/(?<!<a[^>]*>)(?<!<h[1-6][^>]*>)\b' . $quoted_anchor . '\b(?![^<]*<\/a>)(?![^<]*<\/h[1-6]>)/iu';
             $new_content = preg_replace($pattern, '<a href="' . esc_url($target_url) . '">' . $anchor . '</a>', $content, 1, $count);
             
             if ($count > 0) {
@@ -1011,7 +1098,7 @@ class SIL_Ajax_Handler
                 wp_update_post(['ID' => $source_id, 'post_content' => implode("\n", $paragraphs)]);
             } else {
                 // Last resort append
-                $new_content = $content . "\n\n<p>En savoir plus sur : <a href=\"" . esc_url($target_url) . "\">" . esc_html($anchor) . "</a>.</p>";
+                $new_content = $content . "\n\n<!-- wp:paragraph -->\n<p>En savoir plus sur : <a href=\"" . esc_url($target_url) . "\">" . esc_html($anchor) . "</a>.</p>\n<!-- /wp:paragraph -->";
                 wp_update_post(['ID' => $source_id, 'post_content' => $new_content]);
                 $sealed = true;
             }
@@ -1029,6 +1116,8 @@ class SIL_Ajax_Handler
             ],
             ['%d', '%d', '%s', '%s']
         );
+
+        update_post_meta($target_id, '_sil_last_boost_timestamp', time());
 
         $this->main->clear_graph_cache();
         wp_send_json_success('Silo scellé avec succès !');
@@ -1072,37 +1161,91 @@ class SIL_Ajax_Handler
 
         $content = $source_post->post_content;
         
-        // Nettoyage HTML pour le prompt (Gutenberg blocks comments etc)
-        $clean_content = preg_replace('/<!--(.|\s)*?-->/', '', $content);
+        // --- UNIFIED PARAGRAPH EXTRACTION (Swiss Precision) ---
+        if (!class_exists('SIL_Content_Chunker')) {
+            require_once SIL_PLUGIN_DIR . 'includes/class-sil-content-chunker.php';
+        }
+        $chunker = new SIL_Content_Chunker();
+        $paragraphs_full = $chunker->get_paragraphs($source_id, true);
         
-        preg_match_all('/<p[^>]*>(.*?)<\/p>/is', $clean_content, $matches);
-        
-        if (empty($matches[0])) {
-            $paragraphs = array("<p>" . wp_strip_all_tags($clean_content) . "</p>");
-            $total_p = 1;
+        if (empty($paragraphs_full)) {
+            // Fallback ultime
+            $paragraphs = [ "<p>" . wp_strip_all_tags($content) . "</p>" ];
         } else {
-            $paragraphs = $matches[0];
-            $total_p = count($paragraphs);
+            // On convertit en index numérique pour la modal, mais on GARDE les tags
+            $paragraphs = [];
+            foreach ($paragraphs_full as $p_data) {
+                $paragraphs[] = $p_data['raw'];
+            }
+        }
+        $total_p = count($paragraphs);
+
+        // --- INTELLIGENT PARAGRAPH SELECTION (Align with Micro-Embedding) ---
+        if ($p_index === -1) {
+            global $wpdb;
+            $target_vector_raw = $wpdb->get_var($wpdb->prepare(
+                "SELECT embedding FROM {$this->main->table_name} WHERE post_id = %d",
+                $target_id
+            ));
+            
+            if ($target_vector_raw) {
+                $target_vector = json_decode($target_vector_raw, true);
+                if ($target_vector) {
+                     $match = $this->main->embeddings->get_best_paragraph_match($source_id, $target_vector);
+                     if ($match && !empty($match['content'])) {
+                         // Find the index of this paragraph in our extracted list
+                         // On compare le texte CLEAN pour matcher les index
+                         $match_text_norm = trim(wp_strip_all_tags($match['content']));
+                         $idx = 0;
+                         foreach ($paragraphs_full as $p_hash => $p_data) {
+                             if (trim($p_data['clean']) === $match_text_norm) {
+                                 $p_index = $idx;
+                                 break;
+                             }
+                             $idx++;
+                         }
+                     }
+                }
+            }
+
+            // Fallback si non trouvé ou pas d'embedding
+            if ($p_index === -1) {
+                // On cherche le premier paragraphe sans lien
+                for ($i = 0; $i < $total_p; $i++) {
+                    if (!preg_match('/<a\s+/i', $paragraphs[$i])) {
+                        $p_index = $i;
+                        break;
+                    }
+                }
+                // Si tous ont des liens (rare), on prend le premier
+                if ($p_index === -1) $p_index = 0;
+            }
+        } else {
+            // Validation de l'index manuel (Cycle)
+            // Si le paragraphe sélectionné manuellement a un lien, on saute au prochain valide
+            $original_p_index = $p_index;
+            $safety_counter = 0;
+            // REGEX: <a suivi d'un espace, insensible à la casse
+            while (isset($paragraphs[$p_index]) && preg_match('/<a\s+/i', $paragraphs[$p_index]) && $safety_counter < $total_p) {
+                $p_index++;
+                if ($p_index >= $total_p) $p_index = 0;
+                $safety_counter++;
+            }
         }
 
-        // Si p_index est -1, choisir un index au milieu
-        if ($p_index === -1) {
-            $p_index = ($total_p > 2) ? rand(1, $total_p - 2) : 0;
-        }
+        // On prépare une version nettoyée du contenu global
+        $clean_content = preg_replace('/<!--(.|\s)*?-->/', '', $content);
 
         // --- NETTOYAGE SÉLECTIF DU PARAGRAPHE CIBLE ---
-        // Conserver uniquement les balises de formatage : <strong>, <em>, <b>, <i>, <br>
         $selected_html = $paragraphs[$p_index];
         $selected_clean = strip_tags($selected_html, '<strong><em><b><i><br>');
 
         // --- EXTRACTION CONTEXTE (500 chars avant/après) ---
-        // On se base sur le texte brut pour le contexte
         $all_text = wp_strip_all_tags($clean_content);
         $para_text = wp_strip_all_tags($selected_html);
         
         $para_pos = strpos($all_text, $para_text);
         if ($para_pos === false) {
-            // Fallback si le texte brut ne correspond pas exactement (rare)
             $prev_context = ($p_index > 0) ? wp_strip_all_tags($paragraphs[$p_index - 1]) : '';
             $next_context = ($p_index < $total_p - 1) ? wp_strip_all_tags($paragraphs[$p_index + 1]) : '';
         } else {
@@ -1133,7 +1276,8 @@ class SIL_Ajax_Handler
         ];
         $user_prompt = str_replace( array_keys( $vars ), array_values( $vars ), $user_prompt );
 
-        $prompt = "=== MISSION SEO ===\n{$user_prompt}\n\n";
+        // Prompt final : On respecte davantage le prompt utilisateur en évitant les sur-balisages intrusifs
+        $prompt = "{$user_prompt}\n\n";
         
         if (!empty($note)) {
             $prompt .= "📝 NOTE CONTEXTUELLE : {$note}\n\n";
@@ -1141,16 +1285,17 @@ class SIL_Ajax_Handler
 
         $prompt .= "🎯 LIEN À INSÉRER :\n`{$link_html}`\n\n";
         
-        $prompt .= "=== CONTEXTE DE L'ARTICLE (500 chars) ===\n";
+        $prompt .= "=== CONTEXTE DE L'ARTICLE ===\n";
         $prompt .= "PRÉCÉDENT : ...{$prev_context}\n\n";
         $prompt .= "📍 PARAGRAPHE CIBLE À MODIFIER :\n{$selected_clean}\n\n";
         $prompt .= "SUIVANT : {$next_context}...\n\n";
 
-        $prompt .= "=== RÈGLES STRICTES ===\n";
-        $prompt .= "1. Renvoye uniquement le paragraphe modifié (bloc <p>...</p>).\n";
-        $prompt .= "2. Intègre le lien `{$link_html}` de manière ultra-naturelle dans le flux.\n";
-        $prompt .= "3. Préserve les balises existantes dans le paragraphe cible (" . esc_html('<strong>, <em>, etc.') . ").\n";
-        $prompt .= "4. Propose 3 VARIANTES distinctes.\n";
+        $prompt .= "=== RÈGLES DE FORMATAGE ===\n";
+        $prompt .= "1. Renvoyez uniquement le paragraphe modifié (le bloc HTML <p>...). Si vous proposez plusieurs variantes, séparez-les clairement.\n";
+        $prompt .= "2. Intégrez le lien `{$link_html}` de manière ultra-naturelle.\n";
+        $prompt .= "3. Préservez les balises existantes (" . esc_html('<strong>, <em>, etc.') . ").\n";
+        $prompt .= "4. Proposez 3 VARIANTES distinctes.\n";
+
 
         wp_send_json_success([
             'prompt'        => $prompt,
@@ -1176,6 +1321,9 @@ class SIL_Ajax_Handler
         if (!current_user_can('manage_options'))
             wp_send_json_error('Accès restreint aux administrateurs.');
 
+        // Trigger lazy loader to ensure class is required for static calls
+        $this->main->pilot_engine;
+
         $post_id = intval($_POST['source_id']);
         $target_id = intval($_POST['target_id']);
         $original_text = wp_unslash($_POST['original_text']);
@@ -1185,6 +1333,8 @@ class SIL_Ajax_Handler
         $text_for_validation = str_replace(["\r\n", "\r", "\n"], ' ', $final_text);
         $text_for_validation = preg_replace('/<\/p>\s*<p[^>]*>/i', '<br />', $text_for_validation);
         $inner_content_raw = preg_replace('/^<p[^>]*>|<\/p>$/i', '', trim($text_for_validation));
+        // Force strip any block comments accidentally included by the AI or extraction to prevent double encapsulation
+        $inner_content_raw = preg_replace('/<!--\s*\/?wp:[^>]*-->/i', '', $inner_content_raw);
         
         $dom = new DOMDocument();
         libxml_use_internal_errors(true);
@@ -1203,6 +1353,13 @@ class SIL_Ajax_Handler
             return;
         }
 
+        // --- Correction Bug Gutenberg (Phase 8) ---
+        // On nettoie les éventuelles balises <p> doubles que l'IA pourrait renvoyer
+        $inner_content_raw = preg_replace('/^<p[^>]*>|<\/p>$/i', '', trim($inner_content_raw));
+        // Si le contenu contient encore des balises <p>, on les transforme en simples sauts de ligne ou on les garde
+        // mais on évite d'emballer le tout dans un autre <p> si c'est déjà du HTML complexe.
+        $has_internal_p = preg_match('/<p[^>]*>/i', $inner_content_raw);
+
 
         if (!current_user_can('unfiltered_html')) {
             $final_text = wp_kses_post($final_text);
@@ -1210,48 +1367,145 @@ class SIL_Ajax_Handler
         }
 
         $post = get_post($post_id);
+        if (!$post) {
+            wp_send_json_error("Article source introuvable ($post_id).");
+            return;
+        }
         $haystack = $post->post_content;
-        $needle = trim($original_text);
+        
+        // --- NORMALIZATION HELPER (v2.6) ---
+        $normalize = function($t) {
+            $t = html_entity_decode($t, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
+            $t = str_replace("\xc2\xa0", ' ', $t); // Remove non-breaking spaces
+            
+            // Normalize smart quotes and other typography to straight versions
+            $search = ['’', '‘', '“', '”', '«', '»', '…'];
+            $replace = ["'", "'", '"', '"', '"', '"', '...'];
+            $t = str_replace($search, $replace, $t);
+            
+            $t = preg_replace('/\s+/', ' ', $t);
+            return trim($t);
+        };
 
+        $needle = trim($original_text);
         if (empty($needle)) {
-            wp_send_json_error("Erreur critique de sécurité : Le texte original fourni est vide. L'insertion a été annulée pour éviter d'écraser le début de votre article.");
+            wp_send_json_error("Erreur : Le texte original fourni est vide.");
             return;
         }
 
-        $new_content = $haystack;
-        $pos = strpos($haystack, $needle);
+        $p_index = isset($_POST['p_index']) ? intval($_POST['p_index']) : -1;
         $found_needle = false;
+        $pos = false;
         
-        // Surgical replacement (Limit 1)
-        if ($pos !== false) {
-             $found_needle = $needle;
-        } else {
-             // Fallback robust matching (Entités, espaces, quotes)
-            $needle_clean = html_entity_decode($needle, ENT_QUOTES, 'UTF-8');
-            $haystack_decoded = html_entity_decode($haystack, ENT_QUOTES, 'UTF-8');
+        // --- STRATÉGIE 1 : Localisation par Index (Recommandé) ---
+        if ($p_index !== -1) {
+            if (!class_exists('SIL_Content_Chunker')) {
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-content-chunker.php';
+            }
+            $chunker = new SIL_Content_Chunker();
+            $paragraphs = $chunker->get_paragraphs($post_id, true);
             
-            $pos_decoded = mb_strpos($haystack_decoded, $needle_clean, 0, 'UTF-8');
-            if ($pos_decoded !== false) {
-                $regex_needle = preg_quote($needle_clean, '/');
-                $regex_needle = str_replace(["'", '"'], ["(?:'|&rsquo;|&apos;|&#039;)", '(?:"|&quot;|&#034;)'], $regex_needle);
-                // We need the ACTUAL matched string in haystack to check its surroundings.
-                if (preg_match('/' . $regex_needle . '/us', $haystack, $matches, PREG_OFFSET_CAPTURE)) {
-                    $found_needle = $matches[0][0];
-                    $pos = $matches[0][1];
+            $p_keys = array_keys($paragraphs);
+            if (isset($p_keys[$p_index])) {
+                $target_p = $paragraphs[$p_keys[$p_index]];
+                $raw_p = $target_p['raw'];
+                
+                // On vérifie que le texte brut correspond au moins partiellement à ce qu'on attend
+                $norm_target = $normalize($raw_p);
+                $norm_needle = $normalize($needle);
+                
+                if ($norm_target === $norm_needle || strpos($norm_target, $norm_needle) !== false || strpos($norm_needle, $norm_target) !== false) {
+                    $found_needle = $raw_p;
+                    $pos = strpos($haystack, $raw_p);
+                }
+            }
+        }
+
+        // --- STRATÉGIE 2 : Recherche Textuelle (Fallback) ---
+        if ($found_needle === false) {
+            $pos = strpos($haystack, $needle);
+            if ($pos !== false) {
+                 $found_needle = $needle;
+            }
+        }
+
+        if ($found_needle === false) {
+            // FALLBACK 3 : Recherche Insensible aux entités, tags et espaces
+            $needle_norm = $normalize($needle);
+            
+            // On convertit le needle en une regex ultra-flexible
+            // 1. On échappe les caractères spéciaux
+            $regex_pattern = preg_quote($needle_norm, '/');
+            
+            // 2. On rend les balises <p> insensibles aux attributs (Gutenberg)
+            $regex_pattern = preg_replace('/\\\\<p[^>]*?\\\\>/i', '<p[^>]*?>', $regex_pattern);
+            
+            // 3. On rend les espaces flexibles (gère les sauts de ligne, tabs, etc.)
+            $regex_pattern = preg_replace('/(\\\\\s)+/us', '\s+', $regex_pattern);
+            $regex_pattern = preg_replace('/\s+/', '\s+', $regex_pattern);
+
+            // 4. On gère les variations de citations et d'entités communes
+            $regex_pattern = str_replace(["'", '"'], ["(?:'|&rsquo;|&apos;|&#039;|’|‘)", '(?:"|&quot;|&#034;|“|”)'], $regex_pattern);
+
+            if (preg_match('/' . $regex_pattern . '/us', $haystack, $matches, PREG_OFFSET_CAPTURE)) {
+                $found_needle = $matches[0][0];
+                $pos = $matches[0][1];
+            } else {
+                // FALLBACK 2 : Recherche par "Mots clés significatifs" (Ancre glissante)
+                // Si la regex échoue (rare), on cherche le texte sans les tags
+                $needle_text = wp_strip_all_tags($needle_norm);
+                $regex_parts = preg_split('/\s+/', $needle_text, -1, PREG_SPLIT_NO_EMPTY);
+                
+                if (count($regex_parts) > 5) {
+                    $anchor_pattern = '';
+                    foreach (array_slice($regex_parts, 0, 10) as $part) {
+                        $anchor_pattern .= preg_quote($part, '/') . '\s+';
+                    }
+                    $anchor_pattern = rtrim($anchor_pattern, '\s+');
+                    
+                    if (preg_match('/' . $anchor_pattern . '/us', $haystack, $matches, PREG_OFFSET_CAPTURE)) {
+                        $found_needle = $matches[0][0];
+                        $pos = $matches[0][1];
+                        
+                        // Si on a trouvé le texte, on tente d'englober la balise <p> parent
+                        $text_before = substr($haystack, 0, $pos);
+                        $last_p = strrpos($text_before, '<p');
+                        if ($last_p !== false && ($pos - $last_p) < 200) {
+                            $pos = $last_p;
+                            $after_p = substr($haystack, $pos);
+                            $end_p = strpos($after_p, '</p>');
+                            if ($end_p !== false) {
+                                $found_needle = substr($haystack, $pos, $end_p + 4);
+                            }
+                        }
+                    }
                 }
             }
         }
 
         if ($found_needle === false) {
-             wp_send_json_error('Le paragraphe original n\'a pas pu être localisé dans le contenu (possible divergence de formatage ou entités HTML). Le lien n\'a pas été inséré.');
+             error_log("SIL Bridge Failure: Needle not found in Post $post_id. Needle start: " . substr($needle, 0, 100));
+             wp_send_json_error('Le paragraphe original n\'a pas pu être localisé (Formatage divergent).');
              return;
         }
         
         // Now check if the needle is already wrapped in a Gutenberg paragraph block block.
         // We look backwards from $pos to see if there's an opening tag before another closing tag.
         $text_before = substr($haystack, 0, $pos);
-        $last_wp_open = strrpos($text_before, '<!-- wp:paragraph -->');
-        $last_wp_close = strrpos($text_before, '<!-- /wp:paragraph -->');
+        
+        $last_wp_open = false;
+        $open_tag_full = '<!-- wp:paragraph -->';
+        if (preg_match_all('/<!-- wp:paragraph(?: [^>]*)?-->/i', $text_before, $matches, PREG_OFFSET_CAPTURE)) {
+            $last_match = end($matches[0]);
+            $last_wp_open = $last_match[1];
+            $open_tag_full = $last_match[0]; // Stores the tag with potential JSON attributes
+        }
+        
+        $last_wp_close = false;
+        if (preg_match_all('/<!-- \/wp:paragraph -->/i', $text_before, $matches, PREG_OFFSET_CAPTURE)) {
+            $last_close_match = end($matches[0]);
+            $last_wp_close = $last_close_match[1];
+        }
         
         $is_wrapped = false;
         $replace_start = $pos;
@@ -1268,13 +1522,37 @@ class SIL_Ajax_Handler
              }
         }
 
+        // SECURITY: Check if post is currently being edited by another user (Concurrency protection)
+        if (function_exists('wp_check_post_lock') && wp_check_post_lock($post_id)) {
+            $user_id = get_post_meta($post_id, '_edit_lock', true);
+            $user_name = $user_id ? get_userdata(explode(':', $user_id)[1])->display_name : 'un autre utilisateur';
+            wp_send_json_error("Cet article est actuellement en cours d'édition par $user_name. Modification annulée pour éviter tout conflit.");
+            return;
+        }
+
         // Prepare the final replacement string.
-        $replacement = "<!-- wp:paragraph -->\n<p>" . $inner_content_raw . "</p>\n<!-- /wp:paragraph -->";
+        if ($is_wrapped) {
+            // Restore the exact original wrapper, preserving Gutenberg attributes to avoid block invalidation
+            // Si le contenu a déjà des balises P internes, on ne rajoute pas de P global pour éviter le double-wrap
+            if ($has_internal_p) {
+                $replacement = $open_tag_full . "\n" . $inner_content_raw . "\n<!-- /wp:paragraph -->";
+            } else {
+                $replacement = $open_tag_full . "\n<p>" . $inner_content_raw . "</p>\n<!-- /wp:paragraph -->";
+            }
+        } else {
+            // Not originally wrapped in a paragraph block (e.g. Classic editor). Avoid adding one to prevent breaking html.
+            if ($has_internal_p) {
+                $replacement = $inner_content_raw;
+            } else {
+                $replacement = "<p>" . $inner_content_raw . "</p>";
+            }
+        }
         
         $new_content = substr_replace($haystack, $replacement, $replace_start, $replace_length);
 
-
-        wp_update_post(['ID' => $post_id, 'post_content' => $new_content]);
+        // SLASHING: WordPress expects slashed data for wp_update_post
+        $slashed_content = wp_slash($new_content);
+        wp_update_post(['ID' => $post_id, 'post_content' => $slashed_content]);
 
         // Optionnel : Ajouter le lien dans ta table personnalisée $wpdb->insert(...)
         global $wpdb;
@@ -1298,6 +1576,8 @@ class SIL_Ajax_Handler
         if (class_exists('SIL_Action_Logger')) {
             SIL_Action_Logger::log_action('bridge', $post_id, $target_id, ['anchor' => $anchor]);
         }
+        
+        update_post_meta($target_id, '_sil_last_boost_timestamp', time());
         if (method_exists($this->main, 'clear_graph_cache')) {
             $this->main->clear_graph_cache();
         }
@@ -1329,6 +1609,24 @@ class SIL_Ajax_Handler
             ? array_map('sanitize_text_field', $_POST['post_status']) 
             : ['publish'];
 
+        $results = [];
+        $seen_ids = [];
+
+        // --- ID Search: if input is numeric, prioritize exact ID match ---
+        if (is_numeric(trim($search))) {
+            $id_post = get_post(intval($search));
+            if ($id_post && in_array($id_post->post_type, $this->main->get_post_types()) && in_array($id_post->post_status, $post_status)) {
+                $clean_title = wp_specialchars_decode(get_the_title($id_post->ID), ENT_QUOTES);
+                $results[] = array_merge([
+                    'id' => $id_post->ID,
+                    'title' => $clean_title,
+                    'keywords' => [$clean_title]
+                ], $this->get_post_hierarchy($id_post->ID));
+                $seen_ids[] = $id_post->ID;
+            }
+        }
+
+        // --- Keyword Search ---
         $args = [
             'post_type' => $this->main->get_post_types(),
             'post_status' => $post_status,
@@ -1337,11 +1635,12 @@ class SIL_Ajax_Handler
         ];
 
         $posts = get_posts($args);
-        $results = [];
 
         foreach ($posts as $p) {
             if (!is_object($p)) continue;
             $post_id = $p->ID;
+            if (in_array($post_id, $seen_ids)) continue;
+
             $gsc_data = get_post_meta($post_id, '_sil_gsc_data', true);
             $keywords = [];
 
@@ -1351,15 +1650,15 @@ class SIL_Ajax_Handler
                 }
             }
 
-            // Nettoyage du titre avant de l'ajouter
             $clean_title = wp_specialchars_decode(get_the_title($post_id), ENT_QUOTES);
             $keywords[] = $clean_title;
 
-            $results[] = [
+            $results[] = array_merge([
                 'id' => $post_id,
                 'title' => $clean_title,
-                'keywords' => array_values(array_unique(array_filter($keywords))) // Réindexe le tableau
-            ];
+                'keywords' => array_values(array_unique(array_filter($keywords)))
+            ], $this->get_post_hierarchy($post_id));
+            $seen_ids[] = $post_id;
         }
 
         wp_send_json_success($results);
@@ -1681,6 +1980,24 @@ class SIL_Ajax_Handler
                 'desc'   => "$links liens internes suivis."
             ];
 
+            // 4. Check HTML Integrity (Gutenberg Corruptions)
+            if (isset($this->main->pilot_engine)) {
+                $integrity = $this->main->pilot_engine->check_html_integrity(50);
+                if ($integrity['total_corrupted'] > 0) {
+                    $report['html_integrity'] = [
+                        'status' => '❌',
+                        'label'  => "Paragraphes Vides",
+                        'desc'   => "{$integrity['total_corrupted']} article(s) avec des blocs Gutenberg cassés. Modifiez le texte pour rétablir."
+                    ];
+                } else {
+                    $report['html_integrity'] = [
+                        'status' => '✅',
+                        'label'  => "Intégrité HTML",
+                        'desc'   => "Aucun paragraphe vide détecté sur les articles analysés."
+                    ];
+                }
+            }
+
             wp_send_json_success($report);
         } catch (Throwable $e) {
             error_log("SIL Diagnostic Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
@@ -1731,7 +2048,12 @@ class SIL_Ajax_Handler
 
         // Use the custom embeddings table instead of postmeta
         $table_embeddings = $this->main->table_name;
-        $indexed = (int) $wpdb->get_var("SELECT COUNT(*) FROM $table_embeddings");
+        $indexed = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(DISTINCT e.post_id) FROM $table_embeddings e
+             INNER JOIN $wpdb->posts p ON e.post_id = p.ID
+             WHERE p.post_status='publish' AND p.post_type IN ($placeholders)",
+            ...$post_types
+        ));
 
         wp_send_json_success([ 'total' => $total, 'indexed' => $indexed ]);
     }
@@ -1751,15 +2073,25 @@ class SIL_Ajax_Handler
             $posts = get_posts([
                 'post_type' => $post_types,
                 'post_status' => 'publish',
-                'posts_per_page' => 3,
+                'posts_per_page' => -1,
                 'fields' => 'ids'
             ]);
 
             // Manual filter because SQL JOIN is cleaner but get_posts is safer for WP hooks
-            $indexed_ids = $wpdb->get_col("SELECT post_id FROM $table_embeddings");
+            $indexed_ids = $wpdb->get_col("
+                SELECT e.post_id 
+                FROM $table_embeddings e
+                INNER JOIN $wpdb->postmeta pm ON e.post_id = pm.post_id 
+                WHERE pm.meta_key = '_sil_embedding'
+            ");
             $to_index_ids = array_diff($posts, $indexed_ids);
 
-            if ( empty($to_index_ids) ) wp_send_json_success(['processed' => 0, 'finished' => true]);
+            if ( empty($to_index_ids) ) {
+                if (method_exists($this->main, 'clear_graph_cache')) {
+                    $this->main->clear_graph_cache();
+                }
+                wp_send_json_success(['processed' => 0, 'finished' => true]);
+            }
 
             // Process only a small batch
             $batch = array_slice($to_index_ids, 0, 3);
@@ -1778,7 +2110,11 @@ class SIL_Ajax_Handler
                 if ( ! is_wp_error($response) ) {
                     $body = json_decode(wp_remote_retrieve_body($response), true);
                     if ( isset($body['data'][0]['embedding']) ) {
-                        update_post_meta($post->ID, '_sil_embedding', $body['data'][0]['embedding']);
+                        $emb = $body['data'][0]['embedding'];
+                        update_post_meta($post_id, '_sil_embedding', $emb);
+                        
+                        // ALSO update custom table (source of truth)
+                        $this->main->embeddings->save_embedding($post_id, $emb, md5($text));
                     }
                 }
             }
@@ -1814,20 +2150,30 @@ class SIL_Ajax_Handler
             set_time_limit(120);
 
             global $wpdb;
+            $table_membership = $wpdb->prefix . 'sil_silo_membership';
+            $table_embeddings = $this->main->table_name;
+            $post_types = implode("','", $this->main->get_post_types());
+
             $results = $wpdb->get_results("
                 SELECT p.ID, 
-                       m1.meta_value as cluster_id, 
-                       m2.meta_value as embedding
+                       m1.silo_id as cluster_id, 
+                       e.embedding as embedding
                 FROM $wpdb->posts p
-                LEFT JOIN $wpdb->postmeta m1 ON p.ID = m1.post_id AND m1.meta_key = '_sil_cluster_id'
-                LEFT JOIN $wpdb->postmeta m2 ON p.ID = m2.post_id AND m2.meta_key = '_sil_embedding'
-                WHERE p.post_type = 'post' AND p.post_status = 'publish'
+                LEFT JOIN $table_membership m1 ON p.ID = m1.post_id AND m1.is_primary = 1
+                LEFT JOIN $table_embeddings e ON p.ID = e.post_id
+                WHERE p.post_type IN ('$post_types') AND p.post_status = 'publish'
             ");
+
 
             $clusters = []; $post_data = [];
             foreach ($results as $r) {
                 $cid = $r->cluster_id ?: '1';
-                $emb = maybe_unserialize($r->embedding);
+                
+                // Decode JSON (Custom Table) OR Unserialize (Old Postmeta fallback if combined)
+                $emb = is_string($r->embedding) && json_decode($r->embedding, true) !== null 
+                       ? json_decode($r->embedding, true) 
+                       : maybe_unserialize($r->embedding);
+                       
                 if ($emb && is_array($emb)) {
                     $clusters[$cid][] = $emb;
                     $post_data[$r->ID] = ['cid' => $cid, 'emb' => $emb];
@@ -1856,7 +2202,11 @@ class SIL_Ajax_Handler
                     delete_post_meta($pid, '_sil_ideal_silo');
                 }
             }
-            wp_send_json_success(['message' => "$intruders_count intrus détectés."]);
+            wp_send_json_success([
+                'nodes'    => count($post_data),
+                'total'    => count($results),
+                'clusters' => count($barycenters)
+            ]);
         } catch (Throwable $e) {
             error_log("SIL Audit Error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
             wp_send_json_error([
@@ -1866,6 +2216,7 @@ class SIL_Ajax_Handler
             ]);
         }
     }
+
 
     
     /**
@@ -1908,7 +2259,7 @@ class SIL_Ajax_Handler
             $tokens = $handler->fetch_access_token_with_auth_code(sanitize_text_field($_GET['code']));
             
             if ($tokens && isset($tokens['access_token'])) {
-                update_option('sil_gsc_oauth_tokens', $tokens);
+                update_option('sil_gsc_oauth_tokens', $tokens, false);
                 wp_redirect(admin_url('admin.php?page=sil-gsc-settings&gsc_auth=success'));
                 exit;
             } else {
@@ -2035,6 +2386,62 @@ class SIL_Ajax_Handler
      * AJAX: Rebuild semantic silos using Fuzzy C-Means on OpenAI embeddings.
      * Requires manage_options capability.
      */
+    /**
+     * AJAX Pipeline : Étape 1 - Initialisation
+     */
+    public function sil_rebuild_silos_step_init() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Permission refusée');
+
+        $mode = get_option('sil_silo_mode', 'auto');
+        if ($mode === 'auto') {
+            $ambition = get_option('sil_silo_ambition', 'balanced');
+            $k = $this->main->semantic_silos->calculate_recommended_k($ambition);
+        } else {
+            $k = (int) get_option('sil_semantic_k', 6);
+        }
+
+        $result = $this->main->semantic_silos->rebuild_silos_step_init($k);
+
+        if ( is_wp_error($result) ) wp_send_json_error($result->get_error_message());
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX Pipeline : Étape 2 - Itérations
+     */
+    public function sil_rebuild_silos_step_iterate() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Permission refusée');
+
+        $result = $this->main->semantic_silos->rebuild_silos_step_iterate(50); // 50 itérations par paquet
+
+        if ( is_wp_error($result) ) wp_send_json_error($result->get_error_message());
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX Pipeline : Étape 3 - Finalisation
+     */
+    public function sil_rebuild_silos_step_finalize() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if ( ! current_user_can('manage_options') ) wp_send_json_error('Permission refusée');
+
+        $result = $this->main->semantic_silos->rebuild_silos_step_finalize();
+
+        if ( is_wp_error($result) ) wp_send_json_error($result->get_error_message());
+        
+        // Invalidate graph cache directly
+        delete_transient( 'sil_graph_cache' );
+
+        wp_send_json_success([
+            'message' => sprintf('%d contenus traités en %d silos. %d ponts détectés.', 
+                                $result['articles_processed'], $result['silos_count'], $result['bridges_count']),
+            'count' => $result['articles_processed'],
+            'bridges' => $result['bridges_count']
+        ]);
+    }
+
     public function sil_rebuild_semantic_silos() {
         check_ajax_referer('sil_nonce', 'nonce');
         if ( ! current_user_can('manage_options') ) {
@@ -2200,19 +2607,34 @@ class SIL_Ajax_Handler
 
             // 6. Build result
             $suggestions = [];
-            foreach ( $top as $cid => $sim ) {
+            foreach ( $scored as $cid => $sim ) {
                 $memberships = $silos->get_memberships($cid);
+                $p_silo = $silos->get_primary_silo($cid);
+                
                 $suggestions[] = [
-                    'id'         => $cid,
-                    'title'      => get_the_title($cid),
-                    'edit_url'   => admin_url( 'post.php?post=' . intval($cid) . '&action=edit' ),
-                    'view_url'   => get_permalink($cid),
-                    'similarity' => round($sim * 100, 1),
-                    'silo_score' => round(($memberships[$primary_silo] ?? 0) * 100, 1),
-                    'is_bridge'  => isset($memberships[$primary_silo]) && count($memberships) > 1
-                                    && array_sum($memberships) - ($memberships[$primary_silo] ?? 0) >= 0.30,
+                    'id'              => $cid,
+                    'title'           => get_the_title($cid),
+                    'edit_url'        => admin_url( 'post.php?post=' . intval($cid) . '&action=edit' ),
+                    'view_url'        => get_permalink($cid),
+                    'similarity'      => round($sim * 100, 1),
+                    'silo_score'      => round(($memberships[$primary_silo] ?? 0) * 100, 1),
+                    'primary_silo_id' => $p_silo,
+                    'is_native'       => ($p_silo === $primary_silo),
+                    'is_bridge'       => isset($memberships[$primary_silo]) && count($memberships) > 1
+                                       && array_sum($memberships) - ($memberships[$primary_silo] ?? 0) >= 0.30,
                 ];
             }
+
+            // High-level sorting: Native first, then similarity
+            usort($suggestions, function($a, $b) {
+                if ($a['is_native'] !== $b['is_native']) {
+                    return $b['is_native'] ? 1 : -1;
+                }
+                return $b['similarity'] <=> $a['similarity'];
+            });
+
+            // Limit to 12 suggestions total
+            $suggestions = array_slice($suggestions, 0, 12);
 
             wp_send_json_success([
                 'suggestions' => $suggestions,
@@ -2233,6 +2655,7 @@ class SIL_Ajax_Handler
      * AJAX: Get context for a specific link (edge) for the sidebar.
      */
     public function sil_get_edge_context() {
+        global $wpdb;
         check_ajax_referer('sil_nonce', 'nonce');
         if (!current_user_can('edit_posts')) {
             wp_send_json_error('Permission refusée');
@@ -2279,6 +2702,24 @@ class SIL_Ajax_Handler
         $context_prev = strip_tags(substr($content, max(0, $offset - 100), min($offset, 100)));
         $context_next = strip_tags(substr($content, $offset + strlen($full_tag), 100));
 
+        // Real Semantic Proximity Calculation
+        $proximity = 0;
+        $table_embeddings = $wpdb->prefix . 'sil_embeddings';
+        $embs = $wpdb->get_results($wpdb->prepare(
+            "SELECT post_id, embedding FROM $table_embeddings WHERE post_id IN (%d, %d)",
+            $source_id, $target_id
+        ));
+        
+        if (count($embs) === 2) {
+            $v1 = json_decode($embs[0]->embedding, true);
+            $v2 = json_decode($embs[1]->embedding, true);
+            // Ensure we match correct IDs
+            if ($embs[0]->post_id == $target_id) {
+                $temp = $v1; $v1 = $v2; $v2 = $temp;
+            }
+            $proximity = round($this->calculate_cosine_similarity($v1, $v2) * 100);
+        }
+
         // Semantic leak detection & Permeability
         $silos = $this->main->semantic_silos;
         $s_silo = $silos->get_primary_silo($source_id);
@@ -2290,7 +2731,6 @@ class SIL_Ajax_Handler
         $leak_percent = 0;
 
         if ($is_leak && $s_silo) {
-            global $wpdb;
             $table_membership = $wpdb->prefix . 'sil_silo_membership';
             $table_links = $wpdb->prefix . 'sil_links';
             
@@ -2328,13 +2768,14 @@ class SIL_Ajax_Handler
             'is_nofollow' => $is_nofollow,
             'is_leak' => $is_leak,
             'leak_percent' => $leak_percent,
+            'proximity' => $proximity,
             'leak_threshold' => $leak_threshold,
             'source_silo_id' => $s_silo,
             'target_silo_id' => $t_silo,
             'source_silo_label' => $silo_labels[$s_silo] ?? "Silo $s_silo",
             'target_silo_label' => $silo_labels[$t_silo] ?? "Silo $t_silo",
-            'source_title' => get_the_title($source_id),
-            'target_title' => get_the_title($target_id),
+            'source_title' => wp_specialchars_decode(get_the_title($source_id), ENT_QUOTES),
+            'target_title' => wp_specialchars_decode(get_the_title($target_id), ENT_QUOTES),
             'target_url' => $target_url,
             'source_edit_url' => admin_url( 'post.php?post=' . intval($source_id) . '&action=edit' ),
             'target_edit_url' => admin_url( 'post.php?post=' . intval($target_id) . '&action=edit' )
@@ -2405,69 +2846,110 @@ class SIL_Ajax_Handler
         check_ajax_referer('sil_nonce', 'nonce');
         if (!current_user_can('edit_posts')) wp_send_json_error('Permission refusée');
 
-        $post_id = intval($_POST['post_id']);
-        if (!$post_id) wp_send_json_error('ID manquant');
+        try {
+            $post_id = intval($_POST['post_id']);
+            if (!$post_id) wp_send_json_error('ID manquant');
 
-        $cluster_analysis = new SIL_Cluster_Analysis();
-        $megaphone_id = $cluster_analysis->get_megaphone_for_post($post_id);
+            require_once SIL_PLUGIN_DIR . 'includes/class-sil-cluster-analysis.php';
+            $cluster_analysis = new SIL_Cluster_Analysis();
+            $megaphone_id = $cluster_analysis->get_megaphone_for_post($post_id);
+            $closest_brother_id = $cluster_analysis->get_closest_brother_for_post($post_id);
 
-        if (!$megaphone_id) {
-            wp_send_json_error('Aucun Mégaphone trouvé pour ce silo.');
-        }
-
-        $orphan_title    = wp_kses_decode_entities(get_the_title($post_id));
-        $megaphone_title = wp_kses_decode_entities(get_the_title($megaphone_id));
-
-        // --- Anchors Suggestions ---
-        $anchors = [];
-        $anchors[] = $orphan_title; // Option 1: Title
-
-        // Option 2: GSC Top Query
-        $gsc_data = get_post_meta($post_id, '_sil_gsc_data', true);
-        if ($gsc_data) {
-            $gsc = is_array($gsc_data) ? $gsc_data : json_decode($gsc_data, true);
-            if (empty($gsc) && is_string($gsc_data)) {
-                 $gsc = function_exists('maybe_unserialize') ? maybe_unserialize($gsc_data) : unserialize($gsc_data);
+            if (!$megaphone_id && !$closest_brother_id) {
+                wp_send_json_error('Aucun parent trouvé pour ce silo (ni Mégaphone, ni Frère).');
             }
-            $queries = $gsc['top_queries'] ?? (is_array($gsc) ? $gsc : []);
-            if (!empty($queries) && is_array($queries)) {
-                $first = reset($queries);
-                $kw = $first['query'] ?? ($first['keys'][0] ?? '');
-                if ($kw) $anchors[] = $kw;
-            }
-        }
 
-        // Option 3: AI Suggestion
-        $api_key = get_option('sil_openai_api_key');
-        if ($api_key) {
-            $prompt = "Suggère une ancre de lien naturelle et SEO (maximum 4 mots) pour un lien menant vers l'article intitulé : \"$orphan_title\". Le lien sera inséré dans un article sur la thématique sémantique similaire. Répond uniquement par l'ancre, rien d'autre.";
+            $orphan_title = wp_kses_decode_entities(get_the_title($post_id));
             
-            $response = wp_remote_post('https://api.openai.com/v1/chat/completions', [
-                'timeout' => 15,
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $api_key,
-                    'Content-Type'  => 'application/json'
-                ],
-                'body' => json_encode([
-                    'model' => 'gpt-4o-mini',
-                    'messages' => [['role' => 'user', 'content' => $prompt]],
-                    'temperature' => 0.7
-                ])
+            // --- Vérifier si le Mégaphone fait déjà un lien ---
+            $megaphone_already_linking = false;
+            if ($megaphone_id) {
+                global $wpdb;
+                $table_links = $wpdb->prefix . 'sil_links';
+                $link_exists = $wpdb->get_var($wpdb->prepare(
+                    "SELECT id FROM {$table_links} WHERE source_id = %d AND target_id = %d LIMIT 1",
+                    $megaphone_id, $post_id
+                ));
+                if ($link_exists) {
+                    $megaphone_already_linking = true;
+                }
+            }
+
+            // --- Préparer les parents disponibles ---
+            $parents = [];
+            if ($closest_brother_id) {
+                $parents['brother'] = [
+                    'id' => $closest_brother_id,
+                    'title' => wp_kses_decode_entities(get_the_title($closest_brother_id)),
+                    'type' => 'brother',
+                    'already_linking' => false
+                ];
+            }
+            
+            if ($megaphone_id && $megaphone_id !== $closest_brother_id) {
+                 $parents['megaphone'] = [
+                    'id' => $megaphone_id,
+                    'title' => wp_kses_decode_entities(get_the_title($megaphone_id)),
+                    'type' => 'megaphone',
+                    'already_linking' => $megaphone_already_linking
+                ];
+            }
+
+            // --- Anchors Suggestions ---
+            $anchors = [];
+            $anchors[] = $orphan_title;
+
+            $gsc_data = get_post_meta($post_id, '_sil_gsc_data', true);
+            if ($gsc_data) {
+                $gsc = is_array($gsc_data) ? $gsc_data : json_decode($gsc_data, true);
+                if (empty($gsc) && is_string($gsc_data)) {
+                     $gsc = function_exists('maybe_unserialize') ? maybe_unserialize($gsc_data) : unserialize($gsc_data);
+                }
+                $queries = $gsc['top_queries'] ?? (is_array($gsc) ? $gsc : []);
+                if (!empty($queries) && is_array($queries)) {
+                    $first = reset($queries);
+                    $kw = $first['query'] ?? ($first['keys'][0] ?? '');
+                    if ($kw) $anchors[] = $kw;
+                }
+            }
+
+            // Option 3: AI Suggestion
+            $api_key = get_option('sil_openai_api_key');
+            if ($api_key) {
+                $prompt = "Suggère une ancre de lien naturelle et SEO (maximum 4 mots) pour un lien menant vers l'article intitulé : \"$orphan_title\". Le lien sera inséré dans un article sur la thématique sémantique similaire. Répond uniquement par l'ancre, rien d'autre.";
+                
+                $response = wp_remote_post('https://api.openai.com/v1/chat/completions', [
+                    'timeout' => 15,
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $api_key,
+                        'Content-Type'  => 'application/json'
+                    ],
+                    'body' => json_encode([
+                        'model' => 'gpt-4o-mini',
+                        'messages' => [['role' => 'user', 'content' => $prompt]],
+                        'temperature' => 0.7
+                    ])
+                ]);
+
+                if (!is_wp_error($response)) {
+                    $body = json_decode(wp_remote_retrieve_body($response), true);
+                    $ai_anchor = $body['choices'][0]['message']['content'] ?? '';
+                    if ($ai_anchor) $anchors[] = trim($ai_anchor, '" ');
+                }
+            }
+
+            wp_send_json_success([
+                'orphan_id' => $post_id,
+                'orphan_title' => $orphan_title,
+                'parents' => $parents,
+                'anchors' => array_values(array_unique(array_map('wp_kses_decode_entities', array_filter($anchors))))
             ]);
 
-            if (!is_wp_error($response)) {
-                $body = json_decode(wp_remote_retrieve_body($response), true);
-                $ai_anchor = $body['choices'][0]['message']['content'] ?? '';
-                if ($ai_anchor) $anchors[] = trim($ai_anchor, '" ');
-            }
+        } catch (\Throwable $e) {
+            wp_send_json_error('Exception Backend : ' . $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine());
         }
-
-        wp_send_json_success([
-            'megaphone_id' => $megaphone_id,
-            'megaphone_title' => $megaphone_title,
-            'anchors' => array_values(array_unique(array_map('wp_kses_decode_entities', array_filter($anchors))))
-        ]);
     }
+
 
     /**
      * AJAX: Actually adopt the orphan (insert link).
@@ -2477,20 +2959,21 @@ class SIL_Ajax_Handler
         if (!current_user_can('edit_posts')) wp_send_json_error('Permission refusée');
 
         $orphan_id = intval($_POST['orphan_id']);
-        $megaphone_id = intval($_POST['megaphone_id']);
+        $parent_id = intval($_POST['megaphone_id']); // megaphone_id contains the selected parent id (either brother or megaphone)
         $anchor = sanitize_text_field($_POST['anchor']);
 
-        if (!$orphan_id || !$megaphone_id || !$anchor) {
+        if (!$orphan_id || !$parent_id || !$anchor) {
             wp_send_json_error('Données manquantes');
         }
 
         $target_url = get_permalink($orphan_id);
         
         // Mimic the structure expected by sil_insert_internal_link
-        $_POST['post_id'] = $orphan_id;
+        // The post being edited is the parent (source), the link points to the orphan (target).
+        $_POST['post_id'] = $parent_id;
         $_POST['links'] = json_encode([
             [
-                'target_id' => $megaphone_id,
+                'target_id' => $orphan_id,
                 'target_url' => $target_url,
                 'anchor' => $anchor,
                 'paragraph_index' => -1
@@ -2510,11 +2993,29 @@ class SIL_Ajax_Handler
         try {
             $orphans = $this->main->pilot_engine->get_high_potential_orphans(5);
             $boosters = $this->main->pilot_engine->get_gsc_boosters(5);
+            $cannibals = $this->main->pilot_engine->detect_cannibalization_risks();
+
+            // Enrich with Quotas and Locks
+            foreach ($orphans as &$o) {
+                $o['quota'] = $this->main->pilot_engine->get_target_quota($o['id']);
+                $o['current_links'] = $this->main->count_backlinks($o['id']);
+                $o['is_locked'] = $this->main->pilot_engine->is_drip_feed_locked($o['id']);
+            }
+            foreach ($boosters as &$b) {
+                $b['quota'] = $this->main->pilot_engine->get_target_quota($b['post_id']);
+                $b['current_links'] = $this->main->count_backlinks($b['post_id']);
+                $b['is_locked'] = $this->main->pilot_engine->is_drip_feed_locked($b['post_id']);
+            }
 
             if (ob_get_length()) ob_clean();
             wp_send_json_success([
-                'orphans'  => $orphans,
-                'boosters' => $boosters
+                'orphans'   => $orphans,
+                'boosters'  => $boosters,
+                'cannibals' => array_slice($cannibals, 0, 10),
+                'siphons'   => $this->main->pilot_engine->get_siphons(5),
+                'intruders' => $this->main->pilot_engine->get_intruders(5),
+                'leaks'     => $this->main->pilot_engine->get_silo_leaks(),
+                'decay'     => $this->main->pilot_engine->get_content_decay(5)
             ]);
         } catch (Exception $e) {
             if (ob_get_length()) ob_clean();
@@ -2581,6 +3082,7 @@ class SIL_Ajax_Handler
         // Robustness: ensure table exists (v2.5.1 hotfix)
         $this->main->db_manager->check_and_install_tables();
 
+        require_once SIL_PLUGIN_DIR . 'includes/class-sil-action-logger.php';
         if (class_exists('SIL_Action_Logger')) {
             $logs = SIL_Action_Logger::get_recent_actions(20);
             
@@ -2786,6 +3288,383 @@ class SIL_Ajax_Handler
                 wp_send_json_error('Type d\'action V17 inconnu : ' . $type);
                 break;
         }
+    }
+
+    /**
+     * AJAX: Scan posts for HTML integrity issues.
+     */
+    public function sil_scan_html_integrity() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Permission insuffisante');
+        }
+
+        $results = $this->main->pilot_engine->check_html_integrity(100);
+        
+        global $wpdb;
+        $total_protected = (int) $wpdb->get_var("SELECT COUNT(*) FROM $wpdb->postmeta WHERE meta_key = '_sil_html_integrity_hash'");
+        $results['total_protected'] = $total_protected;
+
+        wp_send_json_success($results);
+    }
+
+    /**
+     * AJAX: Get the list of posts marked as corrupted.
+     */
+    public function sil_get_corrupted_posts() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Permission insuffisante');
+        }
+
+        global $wpdb;
+        $results = $wpdb->get_results("
+            SELECT p.ID, p.post_title, p.post_date, pm_err.meta_value as error_type, pm_snip.meta_value as error_snippet
+            FROM $wpdb->posts p
+            INNER JOIN $wpdb->postmeta pm ON p.ID = pm.post_id
+            LEFT JOIN $wpdb->postmeta pm_err ON p.ID = pm_err.post_id AND pm_err.meta_key = '_sil_html_error_type'
+            LEFT JOIN $wpdb->postmeta pm_snip ON p.ID = pm_snip.post_id AND pm_snip.meta_key = '_sil_html_error_snippet'
+            WHERE pm.meta_key = '_sil_html_corrupted' AND pm.meta_value = 'yes'
+            AND p.post_status = 'publish'
+            ORDER BY p.post_date DESC
+            LIMIT 50
+        ");
+
+        $posts = [];
+        foreach ($results as $r) {
+            $posts[] = [
+                'id' => $r->ID,
+                'title' => $r->post_title,
+                'error_type' => $r->error_type ?: 'Corruption inconnue',
+                'edit_url' => get_edit_post_link($r->ID),
+                'date' => date_i18n(get_option('date_format'), strtotime($r->post_date))
+            ];
+        }
+
+        wp_send_json_success($posts);
+    }
+
+    /**
+     * AJAX: Run semantic bridge unit tests.
+     */
+    public function sil_run_bridge_tests() {
+        try {
+            check_ajax_referer('sil_nonce', 'nonce');
+            if (!current_user_can('manage_options')) {
+                wp_send_json_error('Permission insuffisante');
+            }
+
+            // Ensure dependencies are loaded via lazy loader
+            $this->main->pilot_engine; 
+
+            require_once SIL_PLUGIN_DIR . 'includes/class-sil-bridge-tests.php';
+
+            $tests = new SIL_Bridge_Tests();
+            $results = $tests->run_all();
+
+            wp_send_json_success($results);
+        } catch (Throwable $e) {
+            error_log("SIL Bridge Tests Error: " . $e->getMessage());
+            wp_send_json_error('Erreur pendant les tests: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * AJAX : Trouve le paragraphe mathématiquement le plus proche de la cible dans un article source.
+     */
+    public function sil_get_best_paragraph() {
+        check_ajax_referer('sil_admin_nonce', 'nonce');
+
+        $source_id = isset($_POST['source_id']) ? intval($_POST['source_id']) : 0;
+        $target_id = isset($_POST['target_id']) ? intval($_POST['target_id']) : 0;
+
+        if (!$source_id || !$target_id) {
+            wp_send_json_error(['message' => 'IDs source ou cible manquants']);
+        }
+
+        global $wpdb;
+
+        // 1. Récupérer le vecteur de l'article Cible (Global)
+        $target_vector_raw = $wpdb->get_var($wpdb->prepare(
+            "SELECT embedding FROM {$this->main->table_name} WHERE post_id = %d",
+            $target_id
+        ));
+
+        if (!$target_vector_raw) {
+            // Si pas d'embedding global pour la cible, on tente de le générer
+            if ($this->main->generate_embedding($target_id)) {
+                $target_vector_raw = $wpdb->get_var($wpdb->prepare(
+                    "SELECT embedding FROM {$this->main->table_name} WHERE post_id = %d",
+                    $target_id
+                ));
+            }
+        }
+
+        if (!$target_vector_raw) {
+            wp_send_json_error(['message' => 'Impossible de trouver le vecteur de l\'article cible']);
+        }
+
+        $target_vector = json_decode($target_vector_raw, true);
+
+        // 2. Chercher le meilleur paragraphe dans la Source
+        $match = $this->main->embeddings->get_best_paragraph_match($source_id, $target_vector);
+
+        if (!$match) {
+            wp_send_json_error(['message' => 'Aucun paragraphe pertinent trouvé dans l\'article source']);
+        }
+
+        wp_send_json_success([
+            'post_id' => $source_id,
+            'content' => $match['content'],
+            'p_index' => $match['p_index'],
+            'score'   => $match['score']
+        ]);
+    }
+
+    /**
+     * AJAX: Purge all HTML integrity audit metadata
+     */
+    public function sil_purge_integrity_audit() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Permission refusée');
+        }
+
+        global $wpdb;
+        $wpdb->query("DELETE FROM $wpdb->postmeta WHERE meta_key LIKE '_sil_html_%'");
+        
+        wp_send_json_success('Données d\'audit purgées. Relancez l\'audit pour un diagnostic frais.');
+    }
+
+    /**
+     * AJAX: Extrait les entités (signatures thématiques) par lot.
+     */
+    public function sil_extract_entities() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error('Permission refusée');
+        }
+
+        $posts = get_posts([
+            'post_type'      => $this->main->post_types,
+            'post_status'    => 'publish',
+            'numberposts'    => 2, // Réduction drastique pour économiser la RAM
+            'meta_query'     => [
+                [
+                    'key'     => '_sil_entities',
+                    'compare' => 'NOT EXISTS',
+                ],
+            ],
+            'fields'         => 'ids'
+        ]);
+
+        if (empty($posts)) {
+            wp_send_json_success(['processed' => 0, 'remaining' => 0]);
+        }
+
+        $processed = 0;
+        foreach ($posts as $pid) {
+            $this->main->entity_manager->extract_entities($pid);
+            clean_post_cache($pid); // Performance Optimizer : Libération immédiate
+            $processed++;
+        }
+
+        $total_published = count(get_posts([
+            'post_type'   => $this->main->post_types,
+            'post_status' => 'publish',
+            'numberposts' => -1,
+            'fields'      => 'ids'
+        ]));
+
+        $already_covered = count(get_posts([
+            'post_type'   => $this->main->post_types,
+            'post_status' => 'publish',
+            'numberposts' => -1,
+            'meta_query'  => [
+                [
+                    'key'     => '_sil_entities',
+                    'compare' => 'EXISTS',
+                ],
+            ],
+            'fields'      => 'ids'
+        ]));
+
+        $remaining = max(0, $total_published - $already_covered);
+
+        wp_send_json_success([
+            'processed' => $processed,
+            'remaining' => $remaining,
+            'total'     => $total_published,
+            'covered'   => $already_covered
+        ]);
+    }
+
+    /**
+     * AJAX: Fix a siphon by adding a link to the silo's megaphone (Pivot).
+     * Part of Phase 0: Topological Stabilization.
+     */
+    public function sil_fix_siphon() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) wp_send_json_error('Permission refusée');
+
+        $siphon_id = intval($_POST['post_id']);
+        if (!$siphon_id) wp_send_json_error('ID manquant');
+
+        $cluster_analysis = new SIL_Cluster_Analysis();
+        $megaphone_id = $cluster_analysis->get_megaphone_for_post($siphon_id);
+
+        if (!$megaphone_id) {
+            wp_send_json_error('Aucun Mégaphone (Pivot) trouvé pour ce silo. Désignez un contenu pilier d\'abord.');
+        }
+
+        if ($siphon_id === $megaphone_id) {
+            wp_send_json_error('L\'article est déjà le Mégaphone de son silo.');
+        }
+
+        $target_url = get_permalink($megaphone_id);
+        $anchor = get_the_title($megaphone_id);
+        
+        // 1. Get content
+        $post = get_post($siphon_id);
+        $content = $post->post_content;
+
+        // 2. Simple injection at the end of the last paragraph or as a new paragraph
+        $new_link_html = "\n\n<!-- wp:paragraph -->\n<p>En savoir plus sur : <a href=\"" . esc_url($target_url) . "\">" . esc_html($anchor) . "</a>.</p>\n<!-- /wp:paragraph -->";
+        
+        $new_content = $content . $new_link_html;
+
+        $updated = wp_update_post([
+            'ID' => $siphon_id,
+            'post_content' => $new_content
+        ]);
+
+        if (is_wp_error($updated)) {
+            wp_send_json_error('Erreur lors de la mise à jour : ' . $updated->get_error_message());
+        }
+
+        // 3. Log the action
+        global $wpdb;
+        $wpdb->insert(
+            $wpdb->prefix . 'sil_links',
+            [
+                'source_id' => $siphon_id,
+                'target_id' => $megaphone_id,
+                'target_url' => $target_url,
+                'anchor' => $anchor
+            ],
+            ['%d', '%d', '%s', '%s']
+        );
+
+        if (class_exists('SIL_Action_Logger')) {
+            SIL_Action_Logger::log_action('fix_siphon', $siphon_id, $megaphone_id, ['anchor' => $anchor]);
+        }
+
+        $this->main->clear_graph_cache();
+
+        wp_send_json_success([
+            'message' => 'Siphon stabilisé. Un lien vers le Pivot a été ajouté.',
+            'target_title' => $anchor
+        ]);
+    }
+
+    /**
+     * AJAX: Repatriate an intruder by moving it to its semantically ideal silo.
+     * Part of Phase 0: Topological Stabilization.
+     */
+    public function sil_repatriate_intruder() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) wp_send_json_error('Permission refusée');
+
+        $post_id = intval($_POST['post_id']);
+        $new_silo_id = intval($_POST['ideal_silo_id']);
+
+        if (!$post_id || !$new_silo_id) wp_send_json_error('Paramètres manquants');
+
+        global $wpdb;
+        $table_membership = $wpdb->prefix . 'sil_silo_membership';
+
+        // Assurer la mise à jour ou la création du silo primaire
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM $table_membership WHERE post_id = %d AND is_primary = 1",
+            $post_id
+        ));
+
+        if ($exists) {
+            $wpdb->update(
+                $table_membership,
+                ['silo_id' => $new_silo_id],
+                ['post_id' => $post_id, 'is_primary' => 1],
+                ['%d'],
+                ['%d', '%d']
+            );
+        } else {
+            $wpdb->insert(
+                $table_membership,
+                ['post_id' => $post_id, 'silo_id' => $new_silo_id, 'is_primary' => 1],
+                ['%d', '%d', '%d']
+            );
+        }
+
+        if (class_exists('SIL_Action_Logger')) {
+            SIL_Action_Logger::log_action('repatriate_intruder', $post_id, $new_silo_id);
+        }
+
+        $this->main->clear_graph_cache();
+
+        wp_send_json_success([
+            'message' => 'Intrus rapatrié vers son silo idéal.'
+        ]);
+    }
+
+    /**
+     * AJAX: Generate a stabilization prompt for a siphon.
+     * Reuses the bridge prompt logic but focuses on Siphon -> Pivot link.
+     */
+    public function sil_generate_stabilize_prompt() {
+        check_ajax_referer('sil_admin_nonce', 'nonce');
+        if (!current_user_can('edit_posts')) wp_send_json_error('Permission refusée');
+
+        $siphon_id = intval($_POST['post_id']);
+        if (!$siphon_id) wp_send_json_error('ID manquant');
+
+        // Reuse Cluster Analysis to find pivot
+        require_once SIL_PLUGIN_DIR . 'includes/class-sil-cluster-analysis.php';
+        $cluster_analysis = new SIL_Cluster_Analysis();
+        $megaphone_id = $cluster_analysis->get_megaphone_for_post($siphon_id);
+
+        if (!$megaphone_id) {
+            wp_send_json_error('Aucun Mégaphone (Pivot) trouvé pour ce silo. Désignez un contenu pilier d\'abord.');
+        }
+
+        // Set up parameters for the bridge prompt generator
+        $_POST['source_id'] = $siphon_id;
+        $_POST['target_id'] = $megaphone_id;
+        $_POST['anchor_text'] = get_the_title($megaphone_id);
+        $_POST['note'] = "STABILISATION TOPOLOGIQUE : Cet article est un SIPHON (pas de liens sortants). Il doit pointer vers le PIVOT de son silo pour faire circuler le jus.";
+
+        // Call the existing bridge prompt logic
+        return $this->sil_generate_bridge_prompt();
+    }
+
+    /**
+     * AJAX: Find semantic sources for a target (Booster logic).
+     */
+    public function sil_find_semantic_sources() {
+        check_ajax_referer('sil_nonce', 'nonce');
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Permission insuffisante');
+        }
+
+        $target_id = isset($_POST['target_id']) ? (int)$_POST['target_id'] : 0;
+        if (!$target_id) wp_send_json_error('ID cible manquant');
+
+        $sources = $this->main->pilot_engine->find_best_sources_for_target($target_id, 5);
+        
+        if (isset($sources['error']) && $sources['error'] === 'drip_feed_locked') {
+            wp_send_json_error($sources['message']);
+        }
+
+        wp_send_json_success($sources);
     }
 }
 

@@ -60,7 +60,7 @@ class SIL_Admin_Renderer {
 				<h1><?php echo SIL_Icons::get_icon( 'link', [ 'size' => 24, 'class' => 'sil-title-icon' ] ); ?> Smart Internal Links (Articles & Pages)</h1>
 				<div class="sil-header-actions">
 					<button type="button" id="sil-force-gsc-sync-main" class="button button-primary sil-btn-sm"
-						style="margin-right:8px;" title="Recalcul des métriques Content Decay depuis GSC.">🤖 Actualiser les
+						style="margin-right:8px;" title="Recalcul des métriques Content Decay depuis GSC.">Actualiser les
 						métriques GSC</button>
 					<button id="sil-refresh-stats" class="sil-btn sil-btn-secondary sil-btn-sm">🔄</button>
 					<a href="<?php echo admin_url( 'admin.php?page=sil-settings' ); ?>"
@@ -92,7 +92,6 @@ class SIL_Admin_Renderer {
 				<div class="sil-card">
 					<div class="sil-card-header">
 						<h2>📊 Indexation des embeddings</h2>
-						<button id="sil-regenerate" class="sil-btn sil-btn-primary sil-btn-sm">Indexer tout</button>
 					</div>
 					<div class="sil-card-body">
 						<p style="margin:0;color:#6b7280;">Générez les embeddings pour détecter la similarité entre vos articles
@@ -100,6 +99,39 @@ class SIL_Admin_Renderer {
 						<div id="sil-progress" class="sil-progress" style="display:none;">
 							<span class="spinner is-active"></span>
 							<span class="sil-progress-text">Indexation...</span>
+						</div>
+					</div>
+				</div>
+
+				<?php 
+				$health = $this->plugin->semantic_silos->get_architecture_health();
+				$status_color = ($health['status'] === 'healthy') ? '#10b981' : '#f59e0b';
+				?>
+				<div class="sil-card" style="border-left: 5px solid <?php echo $status_color; ?>;">
+					<div class="sil-card-header">
+						<h2>🏛️ Santé de l'Architecture (Paliers de Maturité)</h2>
+					</div>
+					<div class="sil-card-body" style="display:flex; justify-content: space-between; align-items: center;">
+						<div>
+							<p style="margin:0; font-weight:bold; font-size:1.1em;">
+								Statut : <?php echo ($health['status'] === 'healthy') ? '<span style="color:#10b981;">✅ Robuste</span>' : '<span style="color:#f59e0b;">⚠️ Évolutive</span>'; ?>
+							</p>
+							<p style="margin:5px 0 0 0; color:#64748b;">
+								Configuration actuelle : <strong><?php echo $health['k_current']; ?> silos</strong> pour <?php echo $health['total_articles']; ?> articles.
+								<?php if ($health['k_current'] < $health['k_recommended']) : ?>
+									<br/>💡 <em>Conseil : Votre volume d'articles permettrait une architecture plus fine (<?php echo $health['k_recommended']; ?> silos).</em>
+								<?php endif; ?>
+							</p>
+						</div>
+						<div style="text-align:right;">
+							<?php foreach ($health['alerts'] as $alert) : ?>
+								<div style="background:#fff7ed; color:#9a3412; padding:5px 10px; border-radius:4px; font-size:12px; border:1px solid #ffedd5; margin-bottom:5px;">
+									<?php echo esc_html($alert['message']); ?>
+								</div>
+							<?php endforeach; ?>
+							<?php if (empty($health['alerts']) && $health['status'] === 'healthy') : ?>
+								<div style="color:#10b981; font-weight:bold;">Silos équilibrés ✨</div>
+							<?php endif; ?>
 						</div>
 					</div>
 				</div>
@@ -257,8 +289,8 @@ class SIL_Admin_Renderer {
 														<div class="sil-actions">
 															<button class="sil-btn sil-btn-secondary sil-btn-sm sil-preview-btn"
 																data-post-id="<?php echo $post->ID; ?>">Prévisualiser</button>
-															<?php if ( 0 === $incoming ) : ?>
-																	<button class="sil-btn sil-btn-danger sil-btn-sm sil-adopt-btn"
+															<?php if ( $incoming <= 1 ) : ?>
+																	<button class="sil-btn <?php echo ( 0 === $incoming ) ? 'sil-btn-danger' : 'sil-btn-warning'; ?> sil-btn-sm sil-adopt-btn"
 																		data-post-id="<?php echo $post->ID; ?>">Adopter</button>
 															<?php else : ?>
 																	<button class="sil-btn sil-btn-primary sil-btn-sm sil-apply-btn"
@@ -327,10 +359,10 @@ endif;
 				<!-- Bloc 1 : Indexation Sémantique -->
 				<div class="sil-card" style="border-top: 4px solid #3b82f6;">
 					<div class="sil-card-header" style="padding:15px; border-bottom:1px solid #eee;">
-						<h2 style="margin:0; font-size:1.1em;">🧠 Indexation Sémantique</h2>
+						<h2 style="margin:0; font-size:1.1em;">🧠 Moteur IA (Hub Central)</h2>
 					</div>
 					<div class="sil-card-body" style="padding:15px;">
-						<p class="description">Générez les vecteurs d'analyse pour chaque page de votre site (Embeddings OpenAI).</p>
+						<p class="description">Générez les vecteurs d'analyse pour chaque page de votre site (Embeddings OpenAI), puis structurez vos cocons de bout en bout.</p>
 						
 						<div id="sil-indexing-progress-container" style="display:none; margin: 15px 0;">
 							<div style="background:#e2e8f0; border-radius:10px; height:8px; overflow:hidden;">
@@ -342,11 +374,17 @@ endif;
 							</div>
 						</div>
 
-						<div style="display:flex; gap:10px; margin-top:15px;">
-							<button type="button" id="sil-start-indexing" class="button button-primary">🚀 Démarrer l'Indexation</button>
-							<button type="button" id="sil-run-semantic-audit" class="button button-secondary">🔍 Audit de Cohésion</button>
-							<span id="sil-audit-loader" style="display:none; vertical-align: middle; margin-left: 10px;"><span class="spinner is-active" style="float:none;"></span> Audit...</span>
+						<div style="display:flex; flex-direction:column; gap:10px; margin-top:15px;">
+                            <div>
+							    <button type="button" id="sil-start-indexing" class="button button-primary">🚀 1. Indexation Sémantique (Embeddings)</button>
+                                <button type="button" id="sil-generate-architecture" class="button button-secondary">🏗️ 2. Générer les Silos et la Cartographie</button>
+                            </div>
+                            <div style="margin-top: 10px;">
+							    <button type="button" id="sil-run-semantic-audit" class="button button-secondary">🔍 3. Audit de Cohésion</button>
+							    <span id="sil-audit-loader" style="display:none; vertical-align: middle; margin-left: 10px;"><span class="spinner is-active" style="float:none;"></span> Audit...</span>
+                            </div>
 						</div>
+                        <div id="sil-silo-rebuild-status" style="margin-top:10px; font-weight:bold; display:none;"></div>
 						<div id="sil-audit-feedback-settings" style="margin-top:15px; display:none;"></div>
 					</div>
 				</div>
@@ -440,7 +478,11 @@ endif;
 							<tr>
 								<th><label for="sil_openai_bridge_prompt">Prompt IA (Pont Sémantique)</label></th>
 								<td>
-									<textarea id="sil_openai_bridge_prompt" name="sil_openai_bridge_prompt" class="large-text" rows="4"><?php echo function_exists( 'esc_textarea' ) ? esc_textarea( get_option( 'sil_openai_bridge_prompt' ) ) : esc_html( get_option( 'sil_openai_bridge_prompt' ) ); ?></textarea>
+									<?php 
+										$bridge_prompt = get_option( 'sil_openai_bridge_prompt' );
+										if ( empty( $bridge_prompt ) ) { $bridge_prompt = "Tu es un expert SEO en maillage interne. Ta mission est d'insérer un lien interne de façon fluide et naturelle."; }
+									?>
+									<textarea id="sil_openai_bridge_prompt" name="sil_openai_bridge_prompt" class="large-text" rows="4"><?php echo esc_textarea( $bridge_prompt ); ?></textarea>
 									<p class="description">
 										Prompt système utilisé pour l'invention d'ancres et la rédaction de ponts sémantiques.<br />
 										<b>Variables disponibles :</b> <code>{{link}}</code> (lien complet), <code>{{anchor}}</code>, <code>{{url}}</code>, <code>{{source_title}}</code>, <code>{{target_title}}</code>.
@@ -448,10 +490,31 @@ endif;
 								</td>
 							</tr>
 							<tr>
-								<th><label for="sil_similarity_threshold">Seuil de Similarité Sémantique</label></th>
+								<th><label for="sil_similarity_threshold">Seuil de Similarité Sémantique (Audit/Alertes)</label></th>
 								<td>
 									<input type="number" id="sil_similarity_threshold" name="sil_similarity_threshold" value="<?php echo esc_attr( get_option( 'sil_similarity_threshold', 0.3 ) ); ?>" min="0.1" max="0.9" step="0.05" class="small-text">
-									<p class="description">0.3 recommandé. Plus le seuil est haut, plus le maillage est strict.</p>
+									<p class="description">0.3 recommandé. Seuil en dessous duquel un lien est jugé "suspect".</p>
+								</td>
+							</tr>
+							<tr>
+								<th><label for="sil_similarity_max">Seuil de Cannibalisation (Near-Duplicate)</label></th>
+								<td>
+									<input type="number" id="sil_similarity_max" name="sil_similarity_max" value="<?php echo esc_attr( get_option( 'sil_similarity_max', 0.92 ) ); ?>" min="0.5" max="0.99" step="0.01" class="small-text">
+									<p class="description">0.92 recommandé. Bloque le maillage automatique entre deux articles trop proches.</p>
+								</td>
+							</tr>
+							<tr>
+								<th><label for="sil_toxicity_threshold">Seuil de Toxicité Sémantique (Divergence)</label></th>
+								<td>
+									<input type="number" id="sil_toxicity_threshold" name="sil_toxicity_threshold" value="<?php echo esc_attr( get_option( 'sil_toxicity_threshold', 0.4 ) ); ?>" min="0.1" max="0.9" step="0.05" class="small-text">
+									<p class="description">0.4 par défaut. Seuil au-delà duquel un lien est considéré comme "toxique" (divergent sémantiquement).</p>
+								</td>
+							</tr>
+							<tr>
+								<th><label for="sil_gsc_overlap_threshold">Seuil de Chevauchement GSC</label></th>
+								<td>
+									<input type="number" id="sil_gsc_overlap_threshold" name="sil_gsc_overlap_threshold" value="<?php echo esc_attr( get_option( 'sil_gsc_overlap_threshold', 2 ) ); ?>" min="1" max="5" class="small-text">
+									<p class="description">Nb de mots-clés TOP 5 communs pour déclencher une alerte de duel (défaut : 2). Plus le seuil est haut, moins il y a de fausses alertes.</p>
 								</td>
 							</tr>
 							<tr>
@@ -463,10 +526,33 @@ endif;
 								</td>
 							</tr>
 							<tr>
-								<th><label for="sil_semantic_k">Nombre de Cocons Sémantiques (k)</label></th>
+								<th><label for="sil_silo_mode">Mode de Silotage</label></th>
 								<td>
-									<input type="number" id="sil_semantic_k" name="sil_semantic_k" value="<?php echo esc_attr( get_option( 'sil_semantic_k', 6 ) ); ?>" min="2" max="20" class="small-text">
-									<p class="description">Le nombre de grappes (clusters) que l'IA va tenter d'isoler. 6 par défaut.</p>
+									<select name="sil_silo_mode" id="sil_silo_mode" onchange="document.getElementById('sil_manual_k_row').style.display = this.value === 'manual' ? 'table-row' : 'none'; document.getElementById('sil-save-warning').style.display = 'block';">
+										<option value="auto" <?php selected( get_option( 'sil_silo_mode', 'auto' ), 'auto' ); ?>>🚀 Automatique (Recommandé - Basé sur le contenu)</option>
+										<option value="manual" <?php selected( get_option( 'sil_silo_mode' ), 'manual' ); ?>>🛠️ Manuel (Contrôle total)</option>
+									</select>
+									<p class="description">En mode automatique, l'IA ajuste le nombre de cocons selon la densité de vos articles.</p>
+								</td>
+							</tr>
+							<tr id="sil_manual_k_row" style="<?php echo get_option( 'sil_silo_mode', 'auto' ) === 'manual' ? '' : 'display:none;'; ?>">
+								<th><label for="sil_semantic_k">Nombre de Cocons (k)</label></th>
+								<td>
+									<input type="number" id="sil_semantic_k" name="sil_semantic_k" value="<?php echo esc_attr( get_option( 'sil_semantic_k', 6 ) ); ?>" min="2" max="25" class="small-text">
+								</td>
+							</tr>
+							<tr>
+								<th><label for="sil_silo_ambition">Ambition de l'Architecture</label></th>
+								<td>
+									<select name="sil_silo_ambition" id="sil_silo_ambition" onchange="document.getElementById('sil-save-warning').style.display = 'block';">
+										<option value="conservative" <?php selected( get_option( 'sil_silo_ambition', 'balanced' ), 'conservative' ); ?>>🛡️ Prudente (Moins de silos, plus de cohésion)</option>
+										<option value="balanced" <?php selected( get_option( 'sil_silo_ambition', 'balanced' ), 'balanced' ); ?>>⚖️ Équilibrée (Standard SEO)</option>
+										<option value="granular" <?php selected( get_option( 'sil_silo_ambition' ), 'granular' ); ?>>💎 Granulaire (Plus de silos, maillage chirurgical)</option>
+									</select>
+									<p id="sil-save-warning" style="color:#dc2626; font-weight:bold; display:none; margin-top:5px;">⚠️ Pensez à enregistrer vos réglages en bas de page avant de cliquer sur "Générer les Silos" !</p>
+									<p class="description">Définit la finesse de division sémantique. L'IA a analysé la variance de vos mots-clés et détermine l'équilibre mathématique optimal à : 
+                                        <strong><?php echo $this->plugin->semantic_silos->calculate_recommended_k( get_option('sil_silo_ambition', 'balanced') ); ?> silos</strong> (pour <?php echo $this->plugin->semantic_silos->load_embeddings() ? count($this->plugin->semantic_silos->load_embeddings()) : 0; ?> articles indexés).
+                                    </p>
 								</td>
 							</tr>
 							<tr>
@@ -490,14 +576,7 @@ endif;
 									<p class="description">Défaut: 2.0. Force d'attraction vers le centre de la carte (évite l'écartement infini).</p>
 								</td>
 							</tr>
-							<tr>
-								<th>Structure Sémantique</th>
-								<td>
-									<button type="button" id="sil-rebuild-semantic-silos" class="button button-secondary">🔄 Recalculer les Silos Sémantiques</button>
-									<p class="description">Utilise les Embeddings OpenAI pour regrouper vos contenus par thématique pure (C-Means Fuzzy).<br>Cela permet de détecter les <strong>ponts sémantiques</strong> et les dérives entre silos.</p>
-									<div id="sil-silo-rebuild-status" style="margin-top:10px; font-weight:bold; display:none;"></div>
-								</td>
-							</tr>
+
 							<tr>
 								<th>Exclusions & Sécurité</th>
 								<td>
@@ -507,6 +586,41 @@ endif;
 									<label>
 										<input type="checkbox" name="sil_auto_link" value="1" <?php checked( get_option( 'sil_auto_link' ), '1' ); ?>> Indexer automatiquement à la publication
 									</label>
+								</td>
+							</tr>
+
+							<!-- Swiss Elite Booster Section -->
+							<tr style="border-top: 2px solid #3b82f6;">
+								<th colspan="2" style="padding-top: 20px;">
+									<h3 style="margin:0; color:#3b82f6;">💎 Swiss Elite Booster (Maillage de Précision)</h3>
+								</th>
+							</tr>
+							<tr>
+								<th><label for="sil_elite_ratio">Ratio de Maillage Élite (%)</label></th>
+								<td>
+									<input type="number" id="sil_elite_ratio" name="sil_elite_ratio" value="<?php echo esc_attr( get_option( 'sil_elite_ratio', 10 ) ); ?>" min="1" max="30" step="1" class="small-text"> %
+									<p class="description">Ratio cible par rapport au nombre total de pages (10% recommandé). Ex: 100 pages = 10 liens max par cible.</p>
+								</td>
+							</tr>
+							<tr>
+								<th><label for="sil_elite_threshold">Seuil de Similarité Élite</label></th>
+								<td>
+									<input type="number" id="sil_elite_threshold" name="sil_elite_threshold" value="<?php echo esc_attr( get_option( 'sil_elite_threshold', 0.85 ) ); ?>" min="0.5" max="0.99" step="0.01" class="small-text">
+									<p class="description">0.85 recommandé. Seuil strict pour le moteur de matching contextuel.</p>
+								</td>
+							</tr>
+							<tr>
+								<th><label for="sil_drip_feed_days">Période de Drip-Feed (Jours)</label></th>
+								<td>
+									<input type="number" id="sil_drip_feed_days" name="sil_drip_feed_days" value="<?php echo esc_attr( get_option( 'sil_drip_feed_days', 14 ) ); ?>" min="1" max="90" class="small-text"> jours
+									<p class="description">Temps de repos forcé entre deux injections massives de liens pour une même cible (Anti-Spam SEO).</p>
+								</td>
+							</tr>
+							<tr>
+								<th><label for="sil_pillar_multiplier">Multiplicateur Pilier</label></th>
+								<td>
+									<input type="number" id="sil_pillar_multiplier" name="sil_pillar_multiplier" value="<?php echo esc_attr( get_option( 'sil_pillar_multiplier', 2.0 ) ); ?>" min="1" max="5" step="0.5" class="small-text">
+									<p class="description">Défaut: 2.0. Double le quota autorisé pour les articles marqués comme "Piliers".</p>
 								</td>
 							</tr>
 
@@ -561,60 +675,108 @@ endif;
 	 */
 	public function render_cartographie_page() {
 		global $wpdb;
-		$unique_clusters = $wpdb->get_col( "SELECT DISTINCT meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_sil_cluster_id'" );
+		$table_membership = $wpdb->prefix . 'sil_silo_membership';
+		$unique_clusters = $wpdb->get_col( "SELECT DISTINCT silo_id FROM $table_membership" );
 		if ( empty( $unique_clusters ) ) {
-			$unique_clusters = range( 1, 5 );
+			$k = (int) get_option( 'sil_semantic_k', 6 );
+			$unique_clusters = range( 1, $k );
 		}
 		?>
-		<div class="wrap">
-			<div class="sil-header">
-				<h1>🗺️ Cartographie Interactive du Maillage</h1>
-				<div class="sil-graph-toolbar" style="flex-wrap: wrap;">
-					<div style="flex: 1 1 100%; display: flex; gap: 15px; align-items: center; margin-bottom: 12px;">
-						<select id="sil-silo-filter">
-							<option value="all">Tous les cocons (Vue globale)</option>
-							<?php foreach ( $unique_clusters as $cluster_id ) : ?>
-								<option value="<?php echo esc_attr( $cluster_id ); ?>">Silo <?php echo esc_html( $cluster_id ); ?></option>
+		<div class="sil-pilot-wrap sil-swiss-mode">
+			<header class="sil-pilot-header">
+				<div class="sil-pilot-title">
+					<h1>Cartographie Sémantique 🗺️</h1>
+					<p>Explorez la structure topologique et l'étanchéité de vos cocons.</p>
+				</div>
+			</header>
+
+			<div class="sil-graph-toolbar-swiss" style="border:2px solid #000; margin-bottom:20px; background:#fff; display:flex; flex-direction:column;">
+				<!-- Ligne 1 : Contrôles de données (Noir) -->
+				<div style="background:#000; padding:12px 20px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
+					<div style="display:flex; align-items:center; gap:8px;">
+						<span style="color:#fff; font-weight:900; font-family:var(--sil-swiss-mono); font-size:11px; letter-spacing:1px;">VUE</span>
+						<select id="sil-silo-filter" style="margin:0; border:2px solid #fff; background:#222; color:#fff; font-weight:bold; height:32px; padding:0 30px 0 10px;">
+							<option value="all">Tous les cocons (Globale)</option>
+							<?php foreach ( $unique_clusters as $cluster_id ) : 
+								$val = ( $cluster_id < 9000 ) ? $cluster_id + 9000 : $cluster_id;
+								$label = ( $cluster_id > 9000 ) ? $cluster_id - 9000 : $cluster_id;
+							?>
+								<option value="<?php echo esc_attr( $val ); ?>">Silo <?php echo esc_html( $label ); ?></option>
 							<?php endforeach; ?>
 						</select>
-						<input type="text" id="sil-node-search" list="sil-node-list" placeholder="🔍 Rechercher un article..." style="width: 250px;">
+					</div>
+
+					<div style="width:1px; height:24px; background:#333;"></div>
+
+					<div style="display:flex; align-items:center; gap:8px; position:relative;">
+						<span style="color:#fff; font-weight:900; font-family:var(--sil-swiss-mono); font-size:11px; letter-spacing:1px;">AUDIT</span>
+						<select id="sil-tension-selector" style="margin:0; border:2px solid #fff; font-weight:900; background:#222; color:#fff; cursor:pointer; height:32px; padding:0 30px 0 10px;" title="Audit de pertinence sémantique">
+							<option value="all">🌐 Vue globale (Tout voir)</option>
+							<option value="audit_weak">✂️ Liens à couper (0-25%)</option>
+							<option value="audit_fragile">⚠️ Liens fragiles (25-50%)</option>
+							<option value="audit_robust">✅ Liens robustes (50-75%)</option>
+							<option value="audit_core">💎 Cœur de Silo (> 75%)</option>
+						</select>
+						<button id="sil-apply-audit" class="button" style="background:#fff; color:#000; border:2px solid #fff; font-weight:900; height:32px; padding:0 15px; cursor:pointer;">FILTRER 🔍</button>
+						
+						<!-- Barre de progression -->
+						<div id="sil-audit-progress-container" style="display:none; position:absolute; bottom:-12px; left:0; width:100%; height:3px; background:#1f1f23; overflow:hidden;">
+							<div id="sil-audit-progress-bar" style="width:0%; height:100%; background:#fff; transition: width 0.2s ease;"></div>
+						</div>
+						<div id="sil-audit-status" style="position:absolute; bottom:-24px; left:0; font-size:10px; color:#94a3b8; font-family:monospace; display:none; white-space:nowrap;"></div>
+					</div>
+
+					<div style="width:1px; height:24px; background:#333;"></div>
+
+					<div style="display:flex; align-items:center; flex:1;">
+						<input type="text" id="sil-node-search" list="sil-node-list" placeholder="🔍 Rechercher un article par titre ou ID..." style="width:100%; margin:0; border:2px solid #333; background:#111; color:#fff; height:32px; padding:0 10px;">
 						<datalist id="sil-node-list"></datalist>
 					</div>
-					<div style="flex: 1 1 100%; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-						<button id="sil-refresh-graph" class="button" title="Force le recalcul complet (3h cache)">🔄 Rafraîchir l'Analyse</button>
-						<span id="sil-last-update-hint" style="font-size: 11px; color: #64748b; margin-left: 5px;">(Cache: 3h)</span>
-						<button id="sil-center-graph" class="button"><?php echo SIL_Icons::get_icon( 'target', [ 'size' => 16 ] ); ?> Centrer</button>
-						<button id="sil-zoom-in" class="button">➕</button>
-						<button id="sil-zoom-out" class="button">➖</button>
-						<button id="sil-export-png" class="button sil-btn-secondary">📸 Export PNG</button>
-						<button id="sil-export-json" class="button sil-btn-secondary">📦 Export JSON (Audit AI)</button>
-						<span class="sil-badge-count" style="margin-left:auto;">Nœuds: <span id="sil-node-count">0</span></span>
+					
+					<div style="font-family:var(--sil-swiss-mono); font-weight:900; font-size:12px; color:#fff; display:flex; align-items:center; gap:8px;">
+						NŒUDS <span id="sil-node-count" style="background:#333; padding:2px 8px; border-radius:3px;">0</span>
+					</div>
+				</div>
+
+				<!-- Ligne 2 : Outils de la caméra (Blanc) -->
+				<div style="background:#f8fafc; border-top:2px solid #000; padding:8px 20px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+					<button id="sil-refresh-graph" class="button" style="background:#000; color:#fff; border:2px solid #000; font-weight:900; display:flex; align-items:center; gap:5px;">🔄 RAFRAÎCHIR</button>
+					
+					<div style="width:2px; height:20px; background:#e2e8f0; margin:0 5px;"></div>
+					
+					<button id="sil-center-graph" class="button" style="background:#fff; color:#000; border:2px solid #000; display:flex; align-items:center; gap:5px;" title="Centrer le graphe"><?php echo SIL_Icons::get_icon( 'target', [ 'size' => 16 ] ); ?> CENTRER</button>
+					<div style="display:flex; border:2px solid #000; border-radius:3px; overflow:hidden;">
+						<button id="sil-zoom-in" class="button" style="background:#fff; color:#000; border:none; border-right:2px solid #000; border-radius:0; box-shadow:none;" title="Zoom Avant">➕</button>
+						<button id="sil-zoom-out" class="button" style="background:#fff; color:#000; border:none; border-radius:0; box-shadow:none;" title="Zoom Arrière">➖</button>
+					</div>
+
+					<div style="width:2px; height:20px; background:#e2e8f0; margin:0 5px;"></div>
+
+					<div style="display:flex; gap:5px; margin-left:auto;">
+						<button id="sil-export-png" class="button" style="background:#fff; color:#000; border:2px solid #000;" title="Exporter en PNG">📸 PNG</button>
+						<button id="sil-export-json" class="button" style="background:#fff; color:#000; border:2px solid #000;" title="Exporter en JSON">📦 JSON</button>
 					</div>
 				</div>
 			</div>
 
 			<?php
 			$health_score = $this->calculate_health_score();
-			$health_color = '#d63638';
-			if ( $health_score > 40 ) {
-				$health_color = '#dba617';
-			}
-			if ( $health_score > 75 ) {
-				$health_color = '#198754';
-			}
+			$health_color = '#ef4444'; // Red-500
+			if ( $health_score > 40 ) { $health_color = '#f59e0b'; } // Amber-500
+			if ( $health_score > 75 ) { $health_color = '#10b981'; } // Emerald-500
 			?>
-			<div class="sil-health-score-container" style="background:#fff; padding:20px; border-radius:8px; margin-bottom:20px; border:1px solid #ccd0d4; display:flex; align-items:center; gap:20px;">
+			<div class="kpi-card" style="margin-bottom:20px; flex-direction:row; align-items:center; gap:30px; padding:20px;">
 				<div style="flex:1;">
-					<div style="display:flex; justify-content:space-between; margin-bottom:8px; font-weight:600;">
+					<div style="display:flex; justify-content:space-between; margin-bottom:8px; font-weight:900; text-transform:uppercase; letter-spacing:0.1em; font-size:12px;">
 						<span>Score de Santé du Maillage</span>
-						<span style="color:<?php echo $health_color; ?>;"><?php echo $health_score; ?> / 100</span>
+						<span style="color:<?php echo $health_color; ?>;"><?php echo $health_score; ?>%</span>
 					</div>
-					<div style="background:#f0f0f1; height:12px; border-radius:6px; overflow:hidden; border:1px solid #dcdcde;">
-						<div style="width:<?php echo $health_score; ?>%; background:<?php echo $health_color; ?>; height:100%; transition:width 0.5s ease-in-out;"></div>
+					<div style="background:#e2e8f0; height:16px; border:2px solid #000; overflow:hidden;">
+						<div style="width:<?php echo $health_score; ?>%; background:<?php echo $health_color; ?>; height:100%; border-right:2px solid #000;"></div>
 					</div>
 				</div>
-				<div style="max-width:300px; font-size:13px; color:#515962; border-left:1px solid #f0f0f1; padding-left:20px;">
-					<strong>Indicateur de santé :</strong> Ce score prend en compte la couverture de votre maillage (60%) et la densité des liens créés (40%).
+				<div style="max-width:300px; font-size:11px; color:#000; font-family:var(--sil-swiss-mono); line-height:1.4;">
+					<strong>ALGORITHME SIL :</strong> COUVERTURE (60%) + DENSITÉ (40%). UN SCORE > 80% EST REQUIS POUR L'AUTORITÉ TOPOLOGIQUE.
 				</div>
 			</div>
 			<div id="sil-graph-wrapper" style="position:relative; height:700px; background:#fff; border:1px solid #ccd0d4; border-radius:8px; overflow:hidden;">
@@ -1040,7 +1202,28 @@ endif;
 			</p>
 		</div>
 
+		<div style="margin-top: 15px;">
+			<label>
+				<input type="checkbox" name="sil_is_pillar" value="1" <?php checked( $is_pillar, '1' ); ?> />
+				<strong style="color: #3b82f6;">🚀 Swiss Elite Pillar</strong>
+			</label>
+			<p class="description" style="margin-top:5px;">
+				Autorise un quota de liens doublé pour cet article pilier strategique.
+			</p>
+		</div>
+
 		<hr style="margin: 15px 0;">
+
+		<?php $is_excluded = get_post_meta( $post->ID, '_sil_exclude_from_mapping', true ); ?>
+		<div style="margin-top: 10px;">
+			<label>
+				<input type="checkbox" name="sil_exclude_from_mapping" value="1" <?php checked( $is_excluded, '1' ); ?> />
+				<strong style="color: #ef4444;">🚫 Exclure de la Carte</strong>
+			</label>
+			<p class="description" style="margin-top:5px;">
+				Ignore cet article pour le calcul des silos et l'affichage de la cartographie (utile pour Blog, Contact, etc.).
+			</p>
+		</div>
 		<?php
 	}
 	/**
@@ -1072,7 +1255,7 @@ endif;
 		$orphan_class = $orphan_density > 15 ? 'status-crit' : ($orphan_density > 5 ? 'status-warn' : 'status-ok');
 
 		?>
-		<div class="sil-pilot-wrap">
+		<div class="sil-pilot-wrap sil-swiss-mode">
 			<header class="sil-pilot-header">
 				<div class="sil-pilot-title">
 					<h1>Command Center 💎 <span class="badge-beta">v2.5.2</span></h1>
@@ -1082,7 +1265,8 @@ endif;
 					<button class="pilot-tab-btn active" data-tab="dashboard">Tableau de Bord</button>
 					<button class="pilot-tab-btn" data-tab="journal">Journal d'Action</button>
 					<button class="pilot-tab-btn" data-tab="incubator">🌱 Incubateur</button>
-					<button class="pilot-tab-btn" data-tab="diagnosis">Diagnostic 🛡️</button>
+					<button class="pilot-tab-btn" data-tab="coherence">Cohérence 🛡️ <span id="sil-cannibal-bubble" class="sil-notification-bubble" style="display:none;"></span></button>
+					<button class="pilot-tab-btn" data-tab="diagnosis">Diagnostic</button>
 				</div>
 				<div class="sil-pilot-controls">
 					<button class="sil-btn-glass refresh-all"><span class="dashicons dashicons-update"></span> Synchro Totale</button>
@@ -1125,19 +1309,49 @@ endif;
 				</div>
 				<div class="glass-card action-card large">
 					<h3>🎯 Boosters de Trafic (Striking Distance)</h3>
-					<p class="pilot-card-desc">Keywords en position 6-15 : prêts à bondir en 1ère page via un maillage renforcé.</p>
+					<p class="pilot-card-desc">Keywords en position 11-20 : prêts à bondir en 1ère page via un maillage renforcé.</p>
 					<div class="action-list" id="sil-booster-list">
 						<p class="empty-state">Analyse des opportunités GSC...</p>
 					</div>
 					<button class="sil-btn-secondary">Gérer les Gaps →</button>
+				</div>
+				<div class="glass-card action-card large">
+					<h3>🧬 Anomalies Topologiques (Phase 0)</h3>
+					<p class="pilot-card-desc">Siphons (pas de liens sortants) et Intrus (mauvais silo). Stabilisation obligatoire.</p>
+					<div class="action-list" id="sil-topological-list">
+						<p class="empty-state">Scan des siphons et intrus...</p>
+					</div>
+					<button class="sil-btn-glass" onclick="window.location.href='<?php echo admin_url('admin.php?page=sil-cartographie'); ?>'">Voir la Carte →</button>
+				</div>
+			</div>
+
+			<div class="glass-card full-width-card" style="margin-top: 20px;">
+				<div class="card-header-flex">
+					<h3 class="sil-integrity-title">🛡️ Intégrité Gutenberg & Ponts</h3>
+					<div class="sil-btn-group">
+						<button class="sil-btn-glass" id="sil-scan-integrity">Audit Structure</button>
+						<button class="sil-btn-glass" id="sil-purge-integrity" title="Effacer l'historique de l'audit pour recommencer à zéro">Purger 🗑️</button>
+						<button class="sil-btn-glass" id="sil-run-bridge-tests">Tests Pipeline Pont</button>
+					</div>
+				</div>
+				<p class="card-subtitle">Détecte les blocs mal formés (imbrications de paragraphes, blocs vides) qui peuvent casser l'éditeur.</p>
+				<div id="sil-integrity-results" style="display:none;">
+					<div class="integrity-summary">
+						Status : <span id="sil-scanned-count">En attente d'analyse</span> | 
+						Corrompus : <span id="sil-corrupted-total">0</span>
+					</div>
+					<div id="sil-corrupted-list" class="corrupted-list">
+						<!-- Piloté via JS -->
+					</div>
 				</div>
 			</div>
 
 			<div class="sil-insight-grid">
 				<div class="glass-card insight-card pointer-action" data-target="<?php echo admin_url( 'admin.php?page=sil-cartographie' ); ?>">
 					<h4>⚠️ Fuites Sémantiques</h4>
-					<div class="insight-value">12</div>
-					<div class="insight-status warn">Action requise (Carto)</div>
+					<div class="insight-value" id="sil-leak-count">--</div>
+					<div class="insight-status warn">Silos poreux detectés</div>
+					<div class="insight-details-list" id="sil-leak-list"></div>
 				</div>
 				<div class="glass-card insight-card">
 					<h4>📢 Top Mégaphones</h4>
@@ -1146,11 +1360,26 @@ endif;
 				</div>
 				<div class="glass-card insight-card pointer-action" data-target="<?php echo admin_url( 'admin.php?page=sil-stats' ); ?>">
 					<h4>📉 Content Decay</h4>
-					<div class="insight-value">5</div>
-					<div class="insight-status crit">Critique (Stats)</div>
+					<div class="insight-value" id="sil-decay-count">--</div>
+					<div class="insight-status crit">Baisse de performance</div>
+					<div class="insight-details-list" id="sil-decay-list"></div>
 				</div>
 			</div>
 			</div><!-- /#pilot-tab-dashboard -->
+
+			<div id="pilot-tab-coherence" class="pilot-tab-content">
+				<div class="glass-card coherence-card">
+					<div class="coherence-header">
+						<h3>⚔️ Duel de Pages (Cannibalisation)</h3>
+						<button class="sil-btn-glass refresh-cannibals" style="padding: 5px 12px; font-size: 11px;">🔄 Re-analyser</button>
+					</div>
+					<p class="pilot-card-desc">Conflits sémantiques ou GSC détectés. Ces pages se volent mutuellement du trafic par manque de différenciation.</p>
+					
+					<div id="sil-cannibal-list" class="cannibal-action-list">
+						<p class="empty-state">Analyse des conflits en cours...</p>
+					</div>
+				</div>
+			</div><!-- /#pilot-tab-coherence -->
 
 			<div id="pilot-tab-journal" class="pilot-tab-content">
 				<div class="glass-card journal-controls">
@@ -1188,7 +1417,20 @@ endif;
 						<div class="form-row">
 							<input type="text" id="inc-source-search" placeholder="Source (Publié)..." autocomplete="off" style="flex:1;">
 							<input type="text" id="inc-anchor" placeholder="Ancre textuelle visée..." autocomplete="off" style="flex:1;">
-							<input type="text" id="inc-target-search" placeholder="Cible (Brouillon/A venir)..." autocomplete="off" style="flex:1;">
+							<?php
+							$future_posts = get_posts(['post_status' => 'future', 'post_type' => ['post', 'page'], 'numberposts' => -1]);
+							if (!empty($future_posts)) :
+								$size = min(max(count($future_posts), 2), 5); // Au moins 2 lignes si "plusieurs", max 5
+							?>
+								<select id="inc-target-search" style="flex:1; height:auto;" size="<?php echo $size; ?>" onchange="document.getElementById('inc-target-id').value = this.value;">
+									<option value="" disabled selected>Sélectionnez une cible planifiée...</option>
+									<?php foreach ($future_posts as $fp): ?>
+										<option value="<?php echo esc_attr($fp->ID); ?>">🚀 <?php echo esc_html($fp->post_title); ?> (<?php echo get_the_date('d/m', $fp->ID); ?>)</option>
+									<?php endforeach; ?>
+								</select>
+							<?php else : ?>
+								<input type="text" id="inc-target-search" placeholder="Cible (Brouillon/A venir)..." autocomplete="off" style="flex:1;">
+							<?php endif; ?>
 						</div>
 						<div class="form-row" style="margin-top: 10px;">
 							<input type="text" id="inc-note" placeholder="Note optionnelle : contexte, emplacement de l'ancre (ex: dans l'intro, sous H2...)" autocomplete="off" style="flex:3;">
@@ -1211,11 +1453,22 @@ endif;
 
 			<div id="pilot-tab-diagnosis" class="pilot-tab-content">
 				<div class="glass-card">
-					<h3>🛡️ Auto-Diagnostic Système (v2.5.3)</h3>
-					<p>Si l'interface est bloquée, les informations ci-dessous aideront à identifier le verrou technique.</p>
+					<h3 style="color: var(--lux-accent, #f1f5f9);">🛡️ Auto-Diagnostic Système (v2.6.2) - Ref: <?php echo date('H:i:s'); ?></h3>
+					<p>Si l'interface est bloquée ou si vous ne trouvez pas une fonction, consultez les points ci-dessous.</p>
 					
 					<div id="sil-diagnosis-report" class="diagnosis-report">
 						<p class="empty-state">Lancement de l'auto-test...</p>
+					</div>
+
+					<div class="diagnosis-help-box" style="margin-top:20px; background:rgba(217,119,6,0.1); border:1px solid rgba(217,119,6,0.2); border-radius:12px; padding:20px;">
+						<h4 style="margin-top:0; color:var(--lux-accent);">🌉 Où se trouve le Pont Sémantique ?</h4>
+						<p style="font-size:13px; color:var(--lux-gray);">Le Pont Sémantique (Bridge) est accessible depuis la <strong>Cartographie</strong> :</p>
+						<ol style="font-size:13px; color:var(--lux-gray); margin-bottom:15px;">
+							<li>Allez dans l'onglet <strong>Cartographie</strong>.</li>
+							<li>Cliquez sur un article (bulle) pour le sélectionner.</li>
+							<li>Dans la barre latérale, l'icône 🌉 apparaîtra à côté des suggestions ou des résultats de recherche manuelle.</li>
+						</ol>
+						<a href="<?php echo admin_url('admin.php?page=sil-cartographie'); ?>" class="sil-btn-primary">Ouvrir la Cartographie →</a>
 					</div>
 
 					<div class="diagnosis-actions" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">

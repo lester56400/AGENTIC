@@ -2,30 +2,56 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 class SIL_Cluster_Analysis {
-    public function __construct($api_key = null, $model = null) {}
+    private $main;
+    private static $local_graph_cache = null;
+
+
+    public function __construct($main = null) {
+        $this->main = $main ?: SmartInternalLinks::get_instance();
+    }
 
     public function get_graph_data($force_refresh = false) {
-        delete_transient('sil_graph_cache');
-        delete_transient('sil_graph_cache_v8_3');
-        delete_transient('sil_graph_cache_v8_4');
+        global $wpdb;
+        $this->main->centrality_engine; // Garantit l'inclusion pour les méthodes statiques
+        
+        $cache_key = 'sil_graph_cache_v13_0';
+        if ($force_refresh) {
+            delete_transient($cache_key);
+            self::$local_graph_cache = null;
+        }
 
-        $cache_key = 'sil_graph_cache_v8_4';
+        if (!$force_refresh && self::$local_graph_cache !== null) {
+            return self::$local_graph_cache;
+        }
+
         if (!$force_refresh) {
             $cached = get_transient($cache_key);
             if ($cached !== false) {
+                self::$local_graph_cache = $cached;
                 return $cached;
             }
         }
 
+
         $posts = get_posts(['post_type' => ['post', 'page'], 'post_status' => 'publish', 'posts_per_page' => -1]);
         
-        // --- NOUVEAU: Filtrage SEO (noindex) ---
-        if (get_option('sil_exclude_noindex') === '1') {
-            $posts = array_filter($posts, function($post) {
-                return !SIL_SEO_Utils::is_noindexed($post->ID);
-            });
-            $posts = array_values($posts); // Re-index array
+        // --- NOUVEAU: Filtrage SEO (noindex) & Exclusion Manuelle/Système ---
+        $excluded_manual = [];
+        if ( isset( $wpdb ) && is_object( $wpdb ) ) {
+            $excluded_manual = $wpdb->get_col( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_sil_exclude_from_mapping' AND meta_value = '1'" );
+        } else {
+            error_log('SIL Error: $wpdb is null in get_graph_data(). Aborting generation.');
+            return ['nodes' => [], 'edges' => [], 'metadata' => ['error' => 'Database not ready']];
         }
+        $system_pages = [ (int)get_option('page_on_front'), (int)get_option('page_for_posts') ];
+        $all_excluded = array_merge( array_map('intval', $excluded_manual), $system_pages );
+
+        $posts = array_filter($posts, function($post) use ($all_excluded) {
+            if ( in_array((int)$post->ID, $all_excluded) ) return false;
+            if (get_option('sil_exclude_noindex') === '1' && SIL_SEO_Utils::is_noindexed($post->ID)) return false;
+            return true;
+        });
+        $posts = array_values($posts); // Re-index array
 
         $edges_data = $this->get_edges($posts);
         
@@ -54,19 +80,21 @@ class SIL_Cluster_Analysis {
         $bridge_map = [];   // Bridge posts (belong to 2 silos)
 
         // --- Priority 1: Semantic silo membership (Fuzzy C-Means) ---
-        global $wpdb;
-        $membership_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}sil_silo_membership" );
+        $membership_count = 0;
+        if ( isset( $wpdb ) && is_object( $wpdb ) ) {
+            $membership_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}sil_silo_membership" );
 
-        if ( $membership_count > 0 ) {
-            $rows = $wpdb->get_results(
-                "SELECT post_id, silo_id, is_primary, is_bridge FROM {$wpdb->prefix}sil_silo_membership WHERE is_primary = 1",
-                ARRAY_A
-            );
-            foreach ( $rows as $row ) {
-                $pid = (string) $row['post_id'];
-                // Offset silo_id by 9000 to avoid collision with Infomap cluster IDs
-                $semantic_map[$pid] = (string) ( (int) $row['silo_id'] + 9000 );
-                $bridge_map[$pid]   = (bool) $row['is_bridge'];
+            if ( $membership_count > 0 ) {
+                $rows = $wpdb->get_results(
+                    "SELECT post_id, silo_id, is_primary, is_bridge FROM {$wpdb->prefix}sil_silo_membership WHERE is_primary = 1",
+                    ARRAY_A
+                );
+                foreach ( $rows as $row ) {
+                    $pid = (string) $row['post_id'];
+                    // Offset silo_id by 9000 to avoid collision with Infomap cluster IDs
+                    $semantic_map[$pid] = (string) ( (int) $row['silo_id'] + 9000 );
+                    $bridge_map[$pid]   = (bool) $row['is_bridge'];
+                }
             }
         }
 
@@ -97,6 +125,9 @@ class SIL_Cluster_Analysis {
         $cluster_sizes = []; // Keep track of nodes per cluster
         $cluster_pageranks = [];
         $post_cluster_map = [];
+        
+        $anchors = get_option( 'sil_silo_anchors', [] );
+        $anchor_ids = is_array($anchors) ? array_map('intval', array_values($anchors)) : [];
 
         // Prérépartition pour les attributs de cluster
         foreach ( $posts as $post ) {
@@ -179,8 +210,61 @@ class SIL_Cluster_Analysis {
         
         $meta_batch = [];
         foreach ($all_meta as $m) {
-            $meta_batch[$m['post_id']][$m['meta_key']] = $m['meta_value'];
+            $pid = $m['post_id'];
+            $key = $m['meta_key'];
+            $val = $m['meta_value'];
+            
+            // Optimisation : Parser GSC UNE SEULE FOIS ici (Etape 2)
+            if ( $key === '_sil_gsc_data' ) {
+                $parsed = is_string($val) ? json_decode($val, true) : $val;
+                if ( empty($parsed) && is_string($val) && function_exists('maybe_unserialize') ) {
+                    $parsed = maybe_unserialize($val);
+                }
+                $meta_batch[$pid]['_sil_gsc_data_parsed'] = $parsed;
+            } else {
+                $meta_batch[$pid][$key] = $val;
+            }
         }
+        unset($all_meta);
+
+        // ⚠️ AJOUT : Chargement global anticipé des vecteurs (Etape 1)
+        $silo_engine = $this->main->semantic_silos;
+        $global_embeddings = $silo_engine->load_embeddings();
+
+        // --- NOUVELLE PHASE MATHÉMATIQUE GLOBALE (Etape 2) ---
+        $cluster_embeddings = [];
+        foreach ( $posts as $post ) {
+            $pid = (string)$post->ID;
+            $cid = $post_cluster_map[$pid] ?? '0';
+            $emb_raw = $meta_batch[$pid]['_sil_embedding'] ?? '';
+            $emb = is_array($emb_raw) ? $emb_raw : json_decode($emb_raw, true);
+            if (!empty($emb)) {
+                $cluster_embeddings[$cid][$pid] = $emb; 
+            }
+        }
+
+        // 1. Calcul des Barycentres
+        $barycenters = [];
+        foreach ($cluster_embeddings as $cid => $embs) {
+            $barycenters[$cid] = SIL_Centrality_Engine::calculate_barycenter($embs);
+        }
+
+        // 2. Identification des Pivots (purement sémantiques pour le Drift)
+        $pivots = [];
+        $best_scores = [];
+        foreach ($cluster_embeddings as $cid => $embs) {
+            foreach ($embs as $pid => $emb) {
+                $semantic_score = SIL_Centrality_Engine::get_representativeness_score($emb, $barycenters[$cid]);
+                if (!isset($best_scores[$cid]) || $semantic_score > $best_scores[$cid]) {
+                    $best_scores[$cid] = $semantic_score;
+                    $pivots[$cid] = $pid;
+                }
+            }
+        }
+
+        // --- NOUVEAU: Récupération anticipée des labels de silos ---
+        $silo_engine = $this->main->semantic_silos;
+        $silo_labels = $silo_engine->get_silo_labels();
 
         foreach ( $posts as $post ) {
             if ( ! is_object($post) || ! isset($post->ID) ) continue;
@@ -191,12 +275,6 @@ class SIL_Cluster_Analysis {
             if ($is_strategic && $cluster_id !== '0') {
                 $cluster_cornerstone_map[$cluster_id] = $post_id;
             }
-        }
-
-        foreach ( $posts as $post ) {
-            if ( ! is_object($post) || ! isset($post->ID) ) continue;
-            $post_id = (string)$post->ID;
-            $cluster_id = $post_cluster_map[$post_id] ?? '0';
             
             $unique_clusters[$cluster_id] = true;
             $cats = $cat_batch[$post->ID] ?? [];
@@ -217,13 +295,7 @@ class SIL_Cluster_Analysis {
             $p_intra = $post_intra_edges[$post_id] ?? 0;
             $is_intruder_bool = ($p_inter > 0 && $p_intra === 0);
 
-            $is_strategic = ($meta_batch[$post->ID]['_sil_is_cornerstone'] ?? '0') === '1';
-
-            $gsc_data_raw = $meta_batch[$post->ID]['_sil_gsc_data'] ?? '';
-            $gsc_data = is_array($gsc_data_raw) ? $gsc_data_raw : json_decode($gsc_data_raw, true);
-            if (empty($gsc_data) && is_string($gsc_data_raw) && $gsc_data_raw) {
-                $gsc_data = function_exists('maybe_unserialize') ? maybe_unserialize($gsc_data_raw) : unserialize($gsc_data_raw);
-            }
+            $gsc_data = $meta_batch[$post->ID]['_sil_gsc_data_parsed'] ?? [];
             
             $emb_raw = $meta_batch[$post->ID]['_sil_embedding'] ?? '';
             $emb = is_array($emb_raw) ? $emb_raw : json_decode($emb_raw, true);
@@ -299,8 +371,8 @@ class SIL_Cluster_Analysis {
             $trend = $clicks_delta_pct;
             $is_decay_critical = false;
             $post_modified_time = strtotime($post->post_modified);
-            $six_months_ago = strtotime('-6 months');
-            if ($post_modified_time < $six_months_ago && $yield_delta_pct <= -15 && $pos_delta <= -2) {
+            $grace_period_decay = strtotime('-90 days');
+            if ($post_modified_time < $grace_period_decay && $yield_delta_pct <= -15 && $pos_delta <= -2) {
                 $is_decay_critical = true;
             }
 
@@ -329,7 +401,7 @@ class SIL_Cluster_Analysis {
                     'is_strategic' => $is_strategic ? 'true' : 'false',
                     'is_orphan' => in_array('orphan', $tags) ? 'true' : 'false',
                     'is_siphon' => in_array('siphon', $tags) ? 'true' : 'false',
-                    'is_intruder' => $is_intruder_bool ? 'true' : 'false',
+                    'is_topological_leak' => $is_intruder_bool ? 'true' : 'false', // Renommé pour éviter la confusion
                     'is_bridge' => ($bridge_map[$post_id] ?? false) ? 'true' : 'false',
                     'is_semantic_silo' => !empty($semantic_map) ? 'true' : 'false',
                     'cornerstone_id' => $cluster_cornerstone_map[$cluster_id] ?? '',
@@ -338,6 +410,7 @@ class SIL_Cluster_Analysis {
                     'gsc_trend' => $trend,
                     'is_decaying' => $trend < -15 ? 'true' : 'false',
                     'is_decay_critical' => $is_decay_critical ? 'true' : 'false',
+                    'is_anchor' => in_array((int)$post->ID, $anchor_ids) ? 'true' : 'false',
                     'gsc_clicks' => $clicks,
                     'gsc_ctr' => $ctr,
                     'gsc_position' => $pos_avg,
@@ -353,11 +426,14 @@ class SIL_Cluster_Analysis {
                     'index_status' => $meta_batch[$post->ID]['_sil_gsc_index_status'] ?? 'unknown',
                     'word_count' => str_word_count(wp_strip_all_tags($post->post_content)),
                     'incoming_anchors' => $incoming_anchors[$post_id] ?? [],
+                    'silo_label' => $silo_labels[(int)$cluster_id - 9000] ?? "Silo $cluster_id",
                 ],
                 'raw_pr' => $sil_pagerank
             ];
 
+            unset($gsc_data, $emb, $rows, $tags, $page_gaps);
         }
+        unset($cat_batch, $in_degrees, $out_degrees, $post_inter_edges, $post_intra_edges);
 
         // --- SECOND PASS: Normalize PageRank 0-100 ---
         $max_raw_pr = 1;
@@ -369,12 +445,20 @@ class SIL_Cluster_Analysis {
         }
 
         // 4. Création des Halos avec Nommage Garanti
-        $silo_engine = new SIL_Semantic_Silos();
+        $silo_engine = $this->main->semantic_silos;
         $silo_labels = $silo_engine->get_silo_labels();
 
         foreach ( array_keys($unique_clusters) as $cid ) {
             $raw_sid = (int)$cid - 9000;
             $halo_label = $silo_labels[$raw_sid] ?? "Silo $cid";
+
+            // [V20.2] Calcul de la dérive (Drift) : distance entre le pivot (cornerstone ou mathématique) et le barycentre
+            $drift = 0;
+            $pivot_id = $cluster_cornerstone_map[$cid] ?? ($pivots[$cid] ?? null);
+            if ($pivot_id && isset($global_embeddings[$pivot_id]) && isset($barycenters[$cid])) {
+                $sim = SIL_Centrality_Engine::get_representativeness_score($global_embeddings[$pivot_id], $barycenters[$cid]);
+                $drift = round(1.0 - $sim, 3);
+            }
 
             if ($raw_sid <= 0) {
                  // Fallback for non-semantic clusters (Infomap or Categories)
@@ -394,7 +478,8 @@ class SIL_Cluster_Analysis {
                     'id'             => 'silo_' . $cid,
                     'label'          => $halo_label,
                     'is_silo_parent' => "true",
-                    'cluster_id'     => (string) $cid
+                    'cluster_id'     => (string) $cid,
+                    'pivot_drift'    => $drift
                 ]
             ];
         }
@@ -426,11 +511,7 @@ class SIL_Cluster_Analysis {
                  $cluster_cornerstone_map[$cid] = $pid;
             }
             
-            $gsc_raw = $meta_batch[$pid]['_sil_gsc_data'] ?? '';
-            $gsc = is_array($gsc_raw) ? $gsc_raw : json_decode($gsc_raw, true);
-            if (empty($gsc) && is_string($gsc_raw) && $gsc_raw) {
-                $gsc = function_exists('maybe_unserialize') ? maybe_unserialize($gsc_raw) : unserialize($gsc_raw);
-            }
+            $gsc = $meta_batch[$pid]['_sil_gsc_data_parsed'] ?? [];
 
             $rows = $gsc['top_queries'] ?? ($gsc ?: []);
             if (is_array($rows)) {
@@ -466,61 +547,44 @@ class SIL_Cluster_Analysis {
             }
         }
         // Filter True Gaps: High impressions but poor average position (> 15)
-        usort($all_queries, function($a, $b) { return $b['impressions'] <=> $a['impressions']; });
         $all_queries_filtered = [];
-        foreach(array_slice($all_queries, 0, 15) as $q) {
-            if ($q['position'] > 15) $all_queries_filtered[] = $q;
+        foreach($all_queries as $q) {
+            if ($q['position'] > 15) {
+                $all_queries_filtered[] = $q;
+            }
         }
+        // Sort the filtered gaps by impressions
+        usort($all_queries_filtered, function($a, $b) { return $b['impressions'] <=> $a['impressions']; });
+        // Take the top 15 best opportunities
+        $all_queries_filtered = array_slice($all_queries_filtered, 0, 15);
 
-        $silo_engine = new SIL_Semantic_Silos();
+        $silo_engine = $this->main->semantic_silos;
         $distance_matrix = $silo_engine->get_silo_distance_matrix();
 
         // --- NEW: Semantic Content Gaps (Embeddings) ---
         $semantic_gaps = [];
-        $embeddings = $silo_engine->load_embeddings();
+        $embeddings = $global_embeddings;
         
         if (!empty($embeddings) && !empty($distance_matrix)) {
             // 1. Core Gaps (Hollow Silos)
             foreach ($unique_clusters as $cid => $exists) {
                 if ($cid === '0') continue;
+                
+                $barycenter = $barycenters[$cid] ?? null;
+                $closest_id = $pivots[$cid] ?? 0;
+                $max_sim = $best_scores[$cid] ?? 0;
+
+                if (!$barycenter) continue;
+
                 $members = $silo_engine->get_silo_members(intval($cid), true);
                 if (empty($members)) continue;
-
-                // Calculate local barycenter
-                $cluster_embs = [];
-                foreach ($members as $pid) {
-                    if (isset($embeddings[$pid])) $cluster_embs[] = $embeddings[$pid];
-                }
-                if (empty($cluster_embs)) continue;
-
-                $barycenter = SIL_Centrality_Engine::calculate_barycenter($cluster_embs);
-                
-                // Find closest post to barycenter
-                $max_sim = 0;
-                $closest_id = 0;
-                foreach ($members as $pid) {
-                    if (!isset($embeddings[$pid])) continue;
-                    $sim = SIL_Centrality_Engine::get_representativeness_score($embeddings[$pid], $barycenter);
-                    if ($sim > $max_sim) {
-                        $max_sim = $sim;
-                        $closest_id = $pid;
-                    }
-                }
-
-                // Important: Store for Global Analysis (True Gaps)
-                $barycenters[$cid] = $barycenter;
-                $pivots[$cid] = $closest_id;
 
                 // If the "best" post is too far from the center (> 0.40 distance), the silo is hollow
                 if ($max_sim < 0.60) {
                     // Extract lexical field from top 3 central posts
                     $lexical = [];
                     foreach(array_slice($members, 0, 3) as $mpid) {
-                        $m_gsc_raw = $meta_batch[$mpid]['_sil_gsc_data'] ?? '';
-                        $m_gsc = is_array($m_gsc_raw) ? $m_gsc_raw : json_decode($m_gsc_raw, true);
-                        if (empty($m_gsc) && is_string($m_gsc_raw) && $m_gsc_raw) {
-                             $m_gsc = function_exists('maybe_unserialize') ? maybe_unserialize($m_gsc_raw) : unserialize($m_gsc_raw);
-                        }
+                        $m_gsc = $meta_batch[$mpid]['_sil_gsc_data_parsed'] ?? [];
 
                         $m_rows = $m_gsc['top_queries'] ?? ($m_gsc ?: []);
                         if (is_array($m_rows)) {
@@ -560,8 +624,7 @@ class SIL_Cluster_Analysis {
                             foreach ([$s1, $s2] as $target_silo) {
                                 $p_id = $pivots[$target_silo] ?? null;
                                 if ($p_id) {
-                                    $p_gsc_raw = $meta_batch[$p_id]['_sil_gsc_data'] ?? '';
-                                    $p_gsc = json_decode($p_gsc_raw, true) ?: (function_exists('maybe_unserialize') ? maybe_unserialize($p_gsc_raw) : []);
+                                    $p_gsc = $meta_batch[$p_id]['_sil_gsc_data_parsed'] ?? [];
                                     $p_rows = $p_gsc['top_queries'] ?? ($p_gsc ?: []);
                                     if (is_array($p_rows)) {
                                         foreach(array_slice($p_rows, 0, 3) as $pr) $bridge_lexical[] = $pr['query'] ?? '';
@@ -591,25 +654,9 @@ class SIL_Cluster_Analysis {
             }
         }
 
-        // --- FOURTH PASS: Barycenters, Final Scores & Pivots (V8.1) ---
-        $cluster_embeddings = [];
-        foreach ($nodes_data as $n) {
-            $pid = $n['data']['id'];
-            if (isset($n['data']['is_silo_parent'])) continue;
-            $cid = $n['data']['cluster_id'];
-            
-            $emb_raw = $meta_batch[$pid]['_sil_embedding'] ?? '';
-            $emb = is_array($emb_raw) ? $emb_raw : json_decode($emb_raw, true);
-            if (!empty($emb)) $cluster_embeddings[$cid][] = $emb;
-        }
+        // --- FOURTH PASS: Final Scores & Semantic Intruder Detection (V10) ---
 
-        $barycenters = [];
-        foreach ($cluster_embeddings as $cid => $embs) {
-            $barycenters[$cid] = SIL_Centrality_Engine::calculate_barycenter($embs);
-        }
 
-        $pivots = [];
-        $best_scores = [];
         foreach ($nodes_data as &$n) {
             if (isset($n['data']['is_silo_parent'])) continue;
             $pid = $n['data']['id'];
@@ -624,19 +671,59 @@ class SIL_Cluster_Analysis {
             
             $final_score = SIL_Centrality_Engine::compute_final_score($semantic_score, $gsc_power_score, $connectivity_score);
             $n['data']['sil_pagerank'] = $final_score;
-            $n['data']['is_pivot'] = false;
+            $n['data']['is_pivot'] = ($pid === ($pivots[$cid] ?? null)) ? 'true' : 'false';
 
-            if (!isset($best_scores[$cid]) || $final_score > $best_scores[$cid]) {
-                $best_scores[$cid] = $final_score;
-                $pivots[$cid] = $pid;
+
+            // --- NEW: Semantic Intruder Detection (V10) ---
+            $best_cid = $cid;
+            $best_sim = $semantic_score;
+            foreach ($barycenters as $other_cid => $other_bar) {
+                if ((string)$other_cid === (string)$cid) continue;
+                $sim = SIL_Centrality_Engine::get_representativeness_score($emb, $other_bar);
+                if ($sim > $best_sim) {
+                    $best_sim = $sim;
+                    $best_cid = $other_cid;
+                }
             }
-        }
-        foreach ($nodes_data as &$n) {
-            if ($n['data']['id'] === ($pivots[$n['data']['cluster_id']] ?? null)) {
-                $n['data']['is_pivot'] = true;
+
+            if ((string)$best_cid !== (string)$cid) {
+                $n['data']['is_intruder'] = 'true';
+                $n['data']['ideal_cluster_id'] = $best_cid;
+                $n['data']['ideal_cluster_label'] = $silo_labels[(int)$best_cid - 9000] ?? ($silo_titles[$best_cid] ?? "Silo $best_cid");
+                $n['data']['similarity'] = round($best_sim, 3);
+                $n['data']['current_similarity'] = round($semantic_score, 3);
+            } else {
+                $n['data']['is_intruder'] = 'false';
             }
         }
         unset($n);
+
+        // --- NEW: Semantic DNA for weak silos (Selective Semantic Signature) ---
+        $silo_semantic_dna = [];
+        foreach ($cluster_sizes as $cid => $count) {
+            if ($count < 8 && isset($barycenters[$cid])) {
+                $cluster_posts = [];
+                foreach ($nodes_data as $n) {
+                    if (isset($n['data']['is_silo_parent'])) continue;
+                    if ((string)$n['data']['cluster_id'] === (string)$cid) {
+                        $pid = $n['data']['id'];
+                        $emb_raw = $meta_batch[$pid]['_sil_embedding'] ?? '';
+                        $emb = is_array($emb_raw) ? $emb_raw : json_decode($emb_raw, true);
+                        if (!empty($emb)) {
+                            $sim = SIL_Centrality_Engine::get_representativeness_score($emb, $barycenters[$cid]);
+                            $cluster_posts[] = [
+                                'title' => $n['data']['title'],
+                                'score' => $sim
+                            ];
+                        }
+                    }
+                }
+                // Trier par représentativité (score décroissant)
+                usort($cluster_posts, function($a, $b) { return $b['score'] <=> $a['score']; });
+                $dna = array_slice(array_column($cluster_posts, 'title'), 0, 5);
+                $silo_semantic_dna[$cid] = $dna;
+            }
+        }
 
         // --- NEW: Actionable Leak Mapping (Source -> Target culprits) ---
         $post_to_cluster = [];
@@ -732,11 +819,7 @@ class SIL_Cluster_Analysis {
                     // Enrich with Lexical Field for the user
                     $lex_pid = ($q['recommendation'] === 'UPDATE') ? $best_match_id : ($pivots[$best_cid] ?? 0);
                     if ($lex_pid) {
-                        $l_gsc_raw = $meta_batch[$lex_pid]['_sil_gsc_data'] ?? '';
-                        $l_gsc = is_array($l_gsc_raw) ? $l_gsc_raw : json_decode($l_gsc_raw, true);
-                        if (empty($l_gsc) && is_string($l_gsc_raw) && $l_gsc_raw) {
-                             $l_gsc = function_exists('maybe_unserialize') ? maybe_unserialize($l_gsc_raw) : unserialize($l_gsc_raw);
-                        }
+                        $l_gsc = $meta_batch[$lex_pid]['_sil_gsc_data_parsed'] ?? [];
                         $l_rows = $l_gsc['top_queries'] ?? ($l_gsc ?: []);
                         $lexical = [];
                         if (is_array($l_rows)) {
@@ -805,6 +888,32 @@ class SIL_Cluster_Analysis {
             }
         }
 
+        // --- PHASE 15: Carte d'Autorité Thématique (Projection PCA 2D) ---
+        $all_embeddings_for_pca = [];
+        foreach ($nodes_data as $n) {
+            if (isset($n['data']['is_silo_parent'])) continue;
+            $pid = $n['data']['id'];
+            if (isset($global_embeddings[$pid]) && !empty($global_embeddings[$pid])) {
+                $all_embeddings_for_pca[$pid] = $global_embeddings[$pid];
+            }
+        }
+
+        $projection_coords = self::compute_2d_projection($all_embeddings_for_pca);
+        $projection_method = !empty($projection_coords) ? 'pca' : 'fallback_cose';
+
+        // Inject sem_x / sem_y into node data
+        if (!empty($projection_coords)) {
+            foreach ($nodes_data as &$n) {
+                if (isset($n['data']['is_silo_parent'])) continue;
+                $pid = $n['data']['id'];
+                if (isset($projection_coords[$pid])) {
+                    $n['data']['sem_x'] = $projection_coords[$pid]['x'];
+                    $n['data']['sem_y'] = $projection_coords[$pid]['y'];
+                }
+            }
+            unset($n);
+        }
+
         $final_data = [
             'nodes' => $nodes_data,
             'edges' => $final_edges,
@@ -817,17 +926,157 @@ class SIL_Cluster_Analysis {
                 'total_edges' => count($final_edges),
                 'pruned_edges' => count($edges_data) - count($final_edges),
                 'silo_health' => $cluster_permeabilities,
+                'silo_semantic_signatures' => $silo_semantic_dna,
                 'leak_details' => $leak_details,
             ],
             'metadata' => [
                 'generated_at' => current_time('mysql'),
                 'silo_distances' => $distance_matrix,
-                'audit_version' => '2026.V16.2'
+                'audit_version' => '2026.V17.0',
+                'projection_coords' => $projection_coords,
+                'projection_method' => $projection_method,
             ]
         ];
 
-        set_transient('sil_graph_cache_v8_4', $final_data, 3 * HOUR_IN_SECONDS);
+        set_transient('sil_graph_cache_v13_0', $final_data, 3 * HOUR_IN_SECONDS);
+        delete_transient('sil_graph_cache_v12_0');
+        file_put_contents(
+            __DIR__ . '/debug_flash.json', 
+            json_encode(['pivots' => $pivots, 'barycenters_keys' => array_keys($barycenters)], JSON_PRETTY_PRINT)
+        );
+
+        self::$local_graph_cache = $final_data;
         return $final_data;
+    }
+
+    /**
+     * PHASE 15: Calcule une projection PCA 2D à partir des embeddings.
+     * Utilise l'itération de puissance pour extraire les 2 premiers vecteurs propres.
+     *
+     * @param array $embeddings [ post_id => [float, ...] ] (vecteurs 1536d)
+     * @return array|null [ post_id => ['x' => float, 'y' => float] ] ou null si < 3 embeddings
+     */
+    public static function compute_2d_projection($embeddings) {
+        $n = count($embeddings);
+        if ($n < 3) {
+            error_log("[SIL] PCA skip: not enough embeddings ($n)");
+            return null;
+        }
+        $start_time = microtime(true);
+        error_log("[SIL] Starting PCA for $n nodes...");
+
+        $ids = array_keys($embeddings);
+        $vectors = array_values($embeddings);
+        $dim = count($vectors[0]);
+
+        // 1. Calcul du barycentre global
+        $mean = array_fill(0, $dim, 0.0);
+        foreach ($vectors as $v) {
+            for ($i = 0; $i < $dim; $i++) {
+                $mean[$i] += (float)$v[$i];
+            }
+        }
+        for ($i = 0; $i < $dim; $i++) {
+            $mean[$i] /= $n;
+        }
+
+        // 2. Centrage des vecteurs
+        $centered = [];
+        foreach ($vectors as $v) {
+            $c = [];
+            for ($i = 0; $i < $dim; $i++) {
+                $c[] = (float)$v[$i] - $mean[$i];
+            }
+            $centered[] = $c;
+        }
+
+        // 3. Itération de puissance pour trouver les 2 composantes principales
+        //    On travaille dans l'espace dual (n×n) au lieu de (d×d) car n << d
+        //    Gram matrix G[i][j] = centered[i] · centered[j]
+        $gram = [];
+        for ($i = 0; $i < $n; $i++) {
+            $gram[$i] = [];
+            for ($j = $i; $j < $n; $j++) {
+                $dot = 0.0;
+                for ($k = 0; $k < $dim; $k++) {
+                    $dot += $centered[$i][$k] * $centered[$j][$k];
+                }
+                $gram[$i][$j] = $dot;
+                $gram[$j][$i] = $dot;
+            }
+        }
+
+        $components = [];
+        for ($comp = 0; $comp < 2; $comp++) {
+            // Random init
+            $v_iter = [];
+            for ($i = 0; $i < $n; $i++) {
+                $v_iter[$i] = ((float)($i + 1 + $comp * 7)) / $n;
+            }
+
+            // 50 iterations of power method
+            for ($iter = 0; $iter < 50; $iter++) {
+                // Matrix-vector multiply: w = G * v
+                $w = array_fill(0, $n, 0.0);
+                for ($i = 0; $i < $n; $i++) {
+                    for ($j = 0; $j < $n; $j++) {
+                        $w[$i] += $gram[$i][$j] * $v_iter[$j];
+                    }
+                }
+
+                // Deflate: remove projection onto previous components
+                foreach ($components as $prev_comp) {
+                    $dot_prev = 0.0;
+                    for ($i = 0; $i < $n; $i++) {
+                        $dot_prev += $w[$i] * $prev_comp[$i];
+                    }
+                    for ($i = 0; $i < $n; $i++) {
+                        $w[$i] -= $dot_prev * $prev_comp[$i];
+                    }
+                }
+
+                // Normalize
+                $norm = 0.0;
+                for ($i = 0; $i < $n; $i++) {
+                    $norm += $w[$i] * $w[$i];
+                }
+                $norm = sqrt($norm);
+                if ($norm < 1e-10) break;
+                for ($i = 0; $i < $n; $i++) {
+                    $v_iter[$i] = $w[$i] / $norm;
+                }
+            }
+
+            $components[] = $v_iter;
+        }
+
+        if (count($components) < 2) return null;
+
+        // 4. Project: coordinates are the components themselves (dual PCA)
+        $raw_x = $components[0];
+        $raw_y = $components[1];
+
+        // 5. Normalize to canvas range [50, 1950]
+        $min_x = min($raw_x); $max_x = max($raw_x);
+        $min_y = min($raw_y); $max_y = max($raw_y);
+        $range_x = max(1e-10, $max_x - $min_x);
+        $range_y = max(1e-10, $max_y - $min_y);
+
+        $coords = [];
+        for ($i = 0; $i < $n; $i++) {
+            $val_x = 50 + (($raw_x[$i] - $min_x) / $range_x) * 1900;
+            $val_y = 50 + (($raw_y[$i] - $min_y) / $range_y) * 1900;
+
+            $coords[$ids[$i]] = [
+                'x' => (is_nan($val_x) || is_infinite($val_x)) ? 1000 : round($val_x, 2),
+                'y' => (is_nan($val_y) || is_infinite($val_y)) ? 1000 : round($val_y, 2),
+            ];
+        }
+
+        $end_time = microtime(true);
+        error_log("[SIL] PCA completed in " . round($end_time - $start_time, 4) . "s");
+
+        return $coords;
     }
 
 
@@ -856,6 +1105,71 @@ class SIL_Cluster_Analysis {
         }
 
         return null;
+    }
+
+    /**
+     * Identifie le "frère sémantique" le plus proche pour un post donné.
+     * @param int $post_id
+     * @return int|null ID du post Frère Sémantique ou null.
+     */
+    public function get_closest_brother_for_post($post_id) {
+        $graph_data = $this->get_graph_data();
+        $cluster_id = null;
+        $orphan_emb = null;
+        
+        // 1. Trouver le cluster et l'embedding de l'orphelin
+        foreach ($graph_data['nodes'] as $node) {
+            if (isset($node['data']['id']) && (string)$node['data']['id'] === (string)$post_id) {
+                $cluster_id = $node['data']['cluster_id'] ?? null;
+                $emb_raw = get_post_meta($post_id, '_sil_embedding', true);
+                $orphan_emb = is_array($emb_raw) ? $emb_raw : json_decode($emb_raw, true);
+                break;
+            }
+        }
+
+        if (!$cluster_id || empty($orphan_emb)) return null;
+
+        // 2. Extraire les liens existants vers l'orphelin pour les exclure
+        $existing_sources = [];
+        foreach ($graph_data['edges'] as $edge) {
+            if (isset($edge['data']['target']) && (string)$edge['data']['target'] === (string)$post_id) {
+                $existing_sources[(string)$edge['data']['source']] = true;
+            }
+        }
+
+        // 3. Chercher le meilleur candidat dans le même cluster
+        $best_match_id = null;
+        $best_sim = 0;
+
+        foreach ($graph_data['nodes'] as $node) {
+            // Ignorer l'orphelin lui-même et les nœuds parents (Silos)
+            if (isset($node['data']['is_silo_parent'])) continue;
+            if ((string)$node['data']['id'] === (string)$post_id) continue;
+            
+            // Doit être dans le même cluster
+            if ((string)$node['data']['cluster_id'] !== (string)$cluster_id) continue;
+
+            $candidate_id = (string)$node['data']['id'];
+
+            // Exclure si le candidat fait déjà un lien vers l'orphelin
+            if (isset($existing_sources[$candidate_id])) continue;
+
+            // Récupérer l'embedding du candidat
+            $target_emb_raw = get_post_meta((int)$candidate_id, '_sil_embedding', true);
+            $target_emb = is_array($target_emb_raw) ? $target_emb_raw : json_decode($target_emb_raw, true);
+            
+            if (empty($target_emb)) continue;
+
+            // Calculer la similarité cosinus
+            $sim = SIL_Centrality_Engine::get_representativeness_score($orphan_emb, $target_emb);
+            
+            if ($sim > $best_sim) {
+                $best_sim = $sim;
+                $best_match_id = (int)$candidate_id;
+            }
+        }
+
+        return $best_match_id;
     }
 
     private function get_edges($posts) {

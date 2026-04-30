@@ -38,7 +38,7 @@ graph TD
 | User Intent         | Keywords                                   | Selected Agent(s)                           | Auto-invoke? |
 | ------------------- | ------------------------------------------ | ------------------------------------------- | ------------ |
 | **Authentication**  | "login", "auth", "signup", "password"      | `security-auditor` + `backend-specialist`   | ✅ YES       |
-| **UI Component**    | "button", "card", "layout", "style"        | `frontend-specialist`                       | ✅ YES       |
+| **UI Component**    | "button", "card", "layout", "style"        | `ui-ux-designer` + `frontend-specialist`   | ✅ YES       |
 | **Mobile UI**       | "screen", "navigation", "touch", "gesture" | `mobile-developer`                          | ✅ YES       |
 | **API Endpoint**    | "endpoint", "route", "API", "POST", "GET"  | `backend-specialist`                        | ✅ YES       |
 | **Database**        | "schema", "migration", "query", "table"    | `database-architect` + `backend-specialist` | ✅ YES       |
@@ -103,6 +103,7 @@ function analyzeRequest(userMessage) {
 | Domain          | Patterns                                   | Agent                   |
 | --------------- | ------------------------------------------ | ----------------------- |
 | **Security**    | auth, login, jwt, password, hash, token    | `security-auditor`      |
+| **Design**      | design, layout, aesthetic, palette, style  | `ui-ux-designer`        |
 | **Frontend**    | component, react, vue, css, html, tailwind | `frontend-specialist`   |
 | **Backend**     | api, server, express, fastapi, node        | `backend-specialist`    |
 | **Mobile**      | react native, flutter, ios, android, expo  | `mobile-developer`      |

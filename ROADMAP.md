@@ -1,5 +1,93 @@
 Roadmap - Smart Internal Links
 
+---
+
+## 🔒 PHASE 0 — Stabilisation Topologique des Cocons (GATE OBLIGATOIRE)
+
+**Priorité : ABSOLUE — Prérequis à toute autre action SEO**
+
+> ⚠️ **RÈGLE DU VERROU (GATE)** : Tant que cette phase n'est pas terminée, les actions suivantes sont **INTERDITES** :
+> - 🌉 Ponts sémantiques (Alinéa 4.4)
+> - 📈 Striking Distance (Alinéa 2.3)
+> - 📉 Content Decay (Alinéa 2.2)
+> - Toute optimisation cosmétique du maillage
+>
+> **Seule exception autorisée** : les recommandations de **Content Gap** (Alinéa 4.1 — Remplissage des Gaps), car elles renforcent les silos sans risquer de les fragiliser.
+
+**Contexte :** Si le site a un historique technique lourd ou des silos poreux, il est impératif de figer la structure avant d'ajouter des liens. Créer des ponts sur des fondations instables revient à construire sur du sable — perte de temps garantie.
+
+### Étape 0.1 — Ré-ancrage des Intrus (Alinéa 5.1 + 5.2) `[PRIORITÉ ABSOLUE]`
+
+> Objectif : Figer les silos en éliminant les fuites topologiques.
+
+- [x] **Audit complet** : Lister tous les `is_intruder: "true"` avec leur `node_semantic_target`.
+- [x] **Décision par intrus** : Pour chaque intrus, choisir :
+  - **Option A (DÉFAUT)** — Repatrier vers `_sil_ideal_silo` via `[🔄 Repatrier]` (Principe Semantic-First).
+  - **Option B** — Créer un pont vers le silo idéal via `[🌉 Pont]` si déplacement non souhaité.
+- [x] **Vérification** : Aucun nœud `is_intruder` ne subsiste après traitement.
+
+### Étape 0.2 — Traitement des Siphons (Alinéa 3.1) `[PRIORITÉ HAUTE]`
+
+> Objectif : Rétablir la circulation du jus SEO dans les cocons.
+
+- [x] **Audit complet** : Lister tous les `is_siphon: "true"` (in_degree > 3, out_degree = 0).
+- [ ] **Action systématique** : Créer un lien sortant vers le Pivot du silo (`is_pivot: true`) via `[✨ Inventer le lien (IA)]`.
+- [ ] **Vérification** : Aucun nœud `is_siphon` ne subsiste. Chaque siphon redirige du jus vers son Pivot.
+
+### Étape 0.3 — Adoption des Orphelins Matures `[PRIORITÉ MOYENNE]`
+
+> Objectif : Rattacher les pages isolées ayant une ancienneté prouvée.
+
+- [x] **Filtre de maturité** : Ne traiter QUE les orphelins dont `post_date > 60 jours`.
+  - Les orphelins récents (< 60 jours) sont en phase de découverte naturelle → ne pas intervenir.
+- [x] **Audit complet** : Lister tous les `is_orphan: "true"` ET `post_date > 60 jours`.
+- [x] **Trouver le Mégaphone** : Page avec `is_pivot: true` ou `sil_pagerank ≥ 60` dans le **même** `cluster_id`.
+- [x] **Action** : `[✨ Inventer le lien (IA)]` depuis le Mégaphone vers l'orphelin.
+- [ ] **Cas urgent** : Si l'orphelin a aussi `index_status ≠ SUBMITTED_AND_INDEXED` → traitement en priorité 0.
+
+### Critères de Déblocage (Sortie du GATE)
+
+> ✅ **Pour débloquer les phases suivantes, TOUTES ces conditions doivent être remplies :**
+
+| # | Condition | Vérification |
+|---|-----------|-------------|
+| 1 | Zéro intrus restant | `is_intruder: "true"` count = 0 |
+| 2 | Zéro siphon restant | `is_siphon: "true"` count = 0 |
+| 3 | Zéro orphelin mature non traité | `is_orphan: "true"` ET `post_date > 60j` count = 0 |
+| 4 | Perméabilité des silos < 25% | `stats_summary.silo_health` conforme (Alinéa 1.6) |
+
+> 🔓 **Une fois ces 4 conditions validées**, les ponts sémantiques, le striking distance et le content decay sont autorisés.
+
+---
+
+## ⏳ PHASE 0.5 — Délais de Grâce Temporels (Filtre Sélectif)
+
+**Priorité : HAUTE — À intégrer dans `deep.md` (Article 7) + `Gem.md`**
+
+**Contexte :** Intervenir trop tôt sur un contenu neuf, c'est corriger un diagnostic que Google n'a pas encore stabilisé. Le temps est une variable aussi importante que la sémantique.
+
+### Principe : Grace Period sélective par type de diagnostic
+
+| Diagnostic | Grace Period | Raison |
+|---|---|---|
+| Positions faibles / Striking Distance | ⏳ **60j** post-publication | Google n'a pas stabilisé le ranking |
+| Content Decay / Variations de rendement | ⏳ **90j** post-modification | Trop tôt pour mesurer l'effet d'une MAJ |
+| CTR faible (`gsc_ctr < 1.5%`) | ⏳ **60j** post-publication | Pas assez de données d'impressions |
+| Cannibalisation | ⏳ **60j** post-publication | Besoin de données de queries stabilisées |
+| **Intrus / Siphon / Orphelin** | ❌ **Pas de grâce** | Structurel (topologie), pas GSC-dépendant |
+| **Indexation (`CRAWLED_NOT_INDEXED`)** | ❌ **Pas de grâce** | Toujours urgent |
+| **Content Gap** | ❌ **Pas de grâce** | Renforce les silos |
+
+### Tâches d'implémentation
+
+- [ ] **`deep.md`** : Créer un **Article 7 — Délais de Grâce Temporels** avec les seuils et la matrice ci-dessus.
+- [ ] **`Gem.md`** : Ajouter un pré-filtre dans chaque Étape concernée (2, 3, 4) invoquant l'Article 7 avant de diagnostiquer.
+- [ ] **Gem.md — Étape 2 (SAMU)** : Exclure du decay les articles dont `post_modified < 90 jours`.
+- [ ] **Gem.md — Étape 3 (TURBO)** : Exclure du striking distance les articles dont `post_date < 60 jours`.
+- [ ] **Gem.md — Canvas** : Ajouter une mention `⏳ En grâce (Xj restants)` pour les articles filtrés (visibilité sans action).
+
+---
+
 🚨 BMAD — Inversion Logique "Booster" (Cible vs Source)
 
 Priorité : Haute — Focus UI/UX
@@ -8,9 +96,9 @@ Objectif : Transformer le bouton "Booster" en un outil d'acquisition de jus : on
 
 Tâche 1 — Inversion de l'ouverture de la modale (JS) [⚡ Flash-Ready]
 
-[ ] Fichier : assets/admin.js
+[x] Fichier : assets/admin.js
 
-[ ] Dans renderGapTable, trouver l'écouteur de clic sur .sil-booster-btn.
+[x] Dans renderGapTable, trouver l'écouteur de clic sur .sil-booster-btn.
 
 [x] Modifier l'appel à openBridgeModal : passer l'ID de l'article en 2ème argument (Target) et null en 1er (Source).
 
@@ -20,7 +108,7 @@ Tâche 1 — Inversion de l'ouverture de la modale (JS) [⚡ Flash-Ready]
 
 Tâche 2 — Adaptation de l'interface de la modale (JS) [⚡ Flash-Ready]
 
-[ ] Fichier : assets/sil-bridge-manager.js
+[x] Fichier : assets/sil-bridge-manager.js
 
 [x] Dans openBridgeModal(sourceId, targetId, anchor), détecter le "Mode Booster" (sourceId === null && targetId !== null).
 
@@ -31,11 +119,10 @@ Tâche 2 — Adaptation de l'interface de la modale (JS) [⚡ Flash-Ready]
 
 Tâche 3 — Support du sens inverse (PHP)
 
-[ ] Fichier : includes/class-sil-ajax-handler.php
+[x] Fichier : includes/class-sil-ajax-handler.php
 
-[x] Vérifier que sil_search_posts_for_link retourne bien les impressions GSC pour chaque article.
-
-[x] S'assurer que les résultats permettent d'identifier visuellement les Mégaphones (sources fortes) dans la modale via le volume d'impressions.
+- [x] **Vérifier que sil_search_posts_for_link retourne bien les impressions GSC pour chaque article.**
+- [x] **S'assurer que les résultats permettent d'identifier visuellement les Mégaphones (sources fortes) dans la modale via le volume d'impressions.**
 
 🧠 Phase 6 — Moteur de Recherche Hybride (RRF & RankBrain)
 
@@ -57,9 +144,8 @@ cannibalization_risk : Score de similarité sémantique élevé entre deux pages
 
 index_status : Récupération du statut exact via l'API Indexing/GSC.
 
-[ ] Calculateur RRF : Créer la fonction calculate_rrf_score($semantic_rank, $gsc_rank, $k = 60).
-
-[ ] Implémentation de la fusion : Appliquer la formule $RRFscore(d) = \sum_{r \in R} \frac{1}{k + r(d)}$. Le score final est la somme des inverses des rangs dans chaque liste.
+- [x] **Calculateur RRF** : Créer la fonction `calculate_rrf_score($semantic_rank, $gsc_rank, $k = 60)`.
+- [x] **Implémentation de la fusion** : Appliquer la formule $RRFscore(d) = \sum_{r \in R} \frac{1}{k + r(d)}$. Le score final est la somme des inverses des rangs dans chaque liste.
 
 Tâche 2 — Gestion du "Cold Start" & "Plan de Montage" (GEM)
 
@@ -71,17 +157,14 @@ Tâche 2 — Gestion du "Cold Start" & "Plan de Montage" (GEM)
 
 Tâche 3 — Adaptation de find_similar_posts() (Tuyauterie)
 
-[ ] Modifier la méthode pour accepter le paramètre $search_mode ('target' ou 'source').
-
-[x] Filtrage Sémantique : Appliquer un seuil strict (Threshold) à 0.80 pour garantir la cohérence thématique avant d'appliquer le tri RRF.
-
-[x] Mode Source (Booster) : Identifier et prioriser les "Mégaphones" (plus haut volume d'impressions GSC) parmi les voisins sémantiques.
-
-[x] Inclure le hybrid_confidence_score (0-100%) dans le retour JSON.
+- [x] Modifier la méthode pour accepter le paramètre `$search_mode` ('target' ou 'source').
+- [x] **Filtrage Sémantique** : Appliquer un seuil strict (Threshold) à 0.80 pour garantir la cohérence thématique avant d'appliquer le tri RRF.
+- [x] **Mode Source (Booster)** : Identifier et prioriser les "Mégaphones" (plus haut volume d'impressions GSC) parmi les voisins sémantiques.
+- [x] **Inclure le hybrid_confidence_score (0-100%) dans le retour JSON.**
 
 Tâche 4 — Diagnostic de Divergence & UX [⚡ Flash-Ready]
 
-[ ] Alerte d'indexation manquante : Afficher une notice/bannière dans la modale si les embeddings sont absents (invitant à cliquer sur "Indexer tout le contenu").
+[x] Alerte d'indexation manquante : Afficher une notice/bannière dans la modale si les embeddings sont absents (invitant à cliquer sur "Indexer tout le contenu").
 
 [ ] Visualisation de l'Intrus (👾) : Améliorer le rendu Cytoscape pour mettre en évidence les nœuds dont la couleur (Sens/Embedding) jure avec le conteneur (Cluster topologique).
 
@@ -95,15 +178,11 @@ Objectif : Implémenter les 5 boutons spécifiques requis par la configuration M
 
 Tâche 1 — Implémentation des Boutons UI (JS/CSS) [⚡ Flash-Ready]
 
-[ ] 🌉 Créer un pont sémantique : Intégration du workflow hybride (Phrase de transition IA + Lien). Utile quand le mot-clé GSC est absent du texte source mais thématiquement pertinent.
-
-[ ] 🤖 Trouver une ancre (Zéro GSC) : Mode spécifique pour pages sans data GSC (IA génère l'ancre). Bouton de secours crucial pour les pages nouvelles.
-
-[ ] ✨ Générer via IA (RankMath) : Trigger de réécriture du Titre SEO et de la Meta Description si gsc_ctr < 1.5% ou is_decay_critical == true.
-
-[ ] ✨ Inventer le lien (IA) : Automatisation 80/20 pour boucher les trous sémantiques identifiés dans les silos sans intervention manuelle lourde.
-
-[ ] 📉 Désoptimiser (IA) : Action corrective pour les conflits de cannibalisation (cannibalization_risk) ou désamorçage des ancres sur-optimisées.
+- [x] 🌉 **Créer un pont sémantique** : Intégration du workflow hybride (Phrase de transition IA + Lien). Utile quand le mot-clé GSC est absent du texte source mais thématiquement pertinent.
+- [x] 🤖 **Trouver une ancre (Zéro GSC)** : Mode spécifique pour pages sans data GSC (IA génère l'ancre). Bouton de secours crucial pour les pages nouvelles.
+- [x] ✨ **Générer via IA (RankMath)** : Trigger de réécriture du Titre SEO et de la Meta Description si gsc_ctr < 1.5% ou is_decay_critical == true.
+- [x] ✨ **Inventer le lien (IA)** : Automatisation 80/20 pour boucher les trous sémantiques identifiés dans les silos sans intervention manuelle lourde.
+- [x] 📉 **Désoptimiser (IA)** : Action corrective pour les conflits de cannibalisation (cannibalization_risk) ou désamorçage des ancres sur-optimisées.
 
 🐛 Phase 8 — Corrections de Bugs Critiques
 
@@ -113,11 +192,11 @@ Objectif : Sécuriser l'intégrité des blocs Gutenberg lors des manipulations d
 
 Tâche 1 — Correction de la double encapsulation Gutenberg (PHP) [⚡ Flash-Ready]
 
-[ ] Fichier : includes/class-sil-ajax-handler.php
+[x] Fichier : includes/class-sil-ajax-handler.php
 
-[ ] Diagnostiquer la méthode `sil_apply_anchor_context` : le texte de remplacement s'encapsule dans de nouvelles balises `<!-- wp:paragraph -->` même si le paragraphe original les possède déjà.
+[x] Diagnostiquer la méthode `sil_apply_anchor_context` : le texte de remplacement s'encapsule dans de nouvelles balises `<!-- wp:paragraph -->` même si le paragraphe original les possède déjà.
 
-[ ] Adapter la logique de remplacement : Vérifier si le paragraphe dans `$haystack` est déjà enveloppé par un bloc Gutenberg avant d'ajouter les marqueurs `<!-- wp:paragraph -->` autour de `$final_text`, ou remplacer le bloc entier.
+[x] Adapter la logique de remplacement : Vérifier si le paragraphe dans `$haystack` est déjà enveloppé par un bloc Gutenberg avant d'ajouter les marqueurs `<!-- wp:paragraph -->` autour de `$final_text`, ou remplacer le bloc entier.
 
 
 🗓️ À faire pour demain (2026-03-20)
@@ -202,9 +281,9 @@ Tâche 1 — Correction de la double encapsulation Gutenberg (PHP) [⚡ Flash-Re
 
 🛑 Option D : Anti-Cannibalisation IA (Vérification Avant Suggestion)
 
-[ ] Filtre de Similarité Pré-Génération : Injecter la liste des articles existants du silo dans le prompt IA pour lui interdire de suggérer des sujets déjà couverts.
+[x] Filtre de Similarité Pré-Génération : Injecter la liste des articles existants du silo dans le prompt IA pour lui interdire de suggérer des sujets déjà couverts.
 
-[ ] Vérification Vectorielle Hybride (Validé) : Utiliser le moteur RRF comme socle unique pour croiser les nouvelles idées avec l'existant. Similarité requise < 80% pour valider une suggestion.
+[x] Vérification Vectorielle Hybride (Validé) : Utiliser le moteur RRF comme socle unique pour croiser les nouvelles idées avec l'existant. Similarité requise < 92% pour valider une suggestion. Intégré dans le Pilot Center (Duel de Pages).
 
 🛠️ Dette Technique & Architecture (Clean Code)
 
@@ -246,7 +325,7 @@ Utilité : Met à jour immédiatement le badge de statut (Indexé / Non indexé)
 
 Action : Synchronise l'ensemble du site avec la Google Search Console.
 
-Utilité : Récupère les mots-clés, positions, impressions et le statut d'indexation.
+Utilité : Récupère les mots-clés, positions, impressions et le statut d'indexatio
 
 "Indexer tout le contenu" (Page principale Smart Links) :
 
@@ -259,3 +338,163 @@ Utilité : Calcule les "embeddings" pour comprendre le sens des articles. Crucia
 Action : Regroupe les articles en silos basés sur leur sens (clustering) via l'algorithme Infomap.
 
 Utilité : Met à jour la structure du graphe et les couleurs des silos pour visualiser la cohérence thématique.
+
+🚀 Phase 9 — Duel de Pages (Anti-Cannibalisation Hybride)
+
+Objectif : Sécuriser l'autorité thématique en identifiant et neutralisant les conflits de positionnement entre pages "trop proches" (IA) ou se chevauchant sur les mêmes requêtes (GSC).
+
+Tâche 1 — Réglages et Seuils Critiques (PHP)
+[ ] Ajouter `sil_similarity_max` (défaut 0.92) pour bloquer les "Near-Duplicates" sémantiques.
+[ ] Ajouter `sil_gsc_overlap_threshold` (défaut 1) pour détecter les chevauchements de mots-clés TOP 5.
+[ ] Fichier : `smart-internal-links.php` (register_settings).
+
+Tâche 2 — Moteur de Détection Hybride (PHP) [Stratégie Option C]
+[ ] Implémenter `detect_cannibalization_risks()` dans `SIL_Pilot_Engine`.
+[ ] Logique de calcul du Score de Conflit :
+    - Calculer `cosine_similarity` entre paires de posts (optimisé par silos).
+    - Extraire les intersections de `top_queries` dans `sil_gsc_data`.
+[ ] Trigger : Lancement asynchrone lors de la `sync_data` GSC et post-publication.
+[ ] Consigner les résultats dans `sil_action_log` avec le statut `alert`.
+
+Tâche 3 — Interface de Pilotage & Pastille Rouge (JS/UX)
+[ ] Notifications de menu : Ajouter le badge rouge sur le menu "Pilotage" si des alertes non traitées existent.
+[ ] Création de la vue "Duel de Pages" dans le Pilot Center :
+    - Liste des duels avec "Score de Conflit" (Code couleur : Rouge/Orange).
+    - Tableau comparatif des GSC Queries en conflit.
+    - Boutons d'action : "Gérer le Duel" (Ouvre la modale de fusion/désoptimisation).
+
+Tâche 4 — Blocage Préventif de Maillage (Logic)
+[ ] Dans `insert_internal_links()`, interdire l'insertion de liens automatiques entre deux pages déclarées en "Duel" pour éviter l'aggravation de la cannibalisation.
+
+🚀 Phase 10 — Précision Chirurgicale (Micro-Embeddings)
+
+Priorité : Haute — Focus Pertinence Contextuelle
+
+Objectif : Améliorer la localisation de l'ancre en identifiant mathématiquement le paragraphe le plus pertinent au sein d'un article long via une approche hybride (Global -> Local).
+
+- [x] **Tâche 1 — Moteur de Segmentation Gutenberg (PHP)**
+- [x] **Tâche 2 — Cache Sémantique Local (DB)**
+- [x] **Tâche 3 — Workflow de Recherche Hybride (PHP/JS)**
+- [x] **Tâche 4 — Optimisation Financière & Performance**
+
+🚀 Phase 11 — Protection en Temps Réel (Garde-fous)
+
+Priorité : Moyenne — Focus Prévention
+
+Objectif : Empêcher la corruption structurelle de se propager en interceptant le contenu avant sa sauvegarde.
+
+Tâche 1 — Hook de Sauvegarde (PHP)
+[ ] Implémenter un filtre sur `wp_insert_post_data` ou `pre_post_update`.
+[ ] Réutiliser la logique de `check_html_integrity` pour scanner le contenu entrant.
+[ ] Si une corruption majeure est détectée (blocs mal formés), lever une exception ou ajouter une notice d'admin "Contenu à risque" pour empêcher la sauvegarde aveugle.
+
+---
+
+📋 Note : Phase validée par brainstorm le 2026-04-10 (Option A).
+
+---
+
+## 🚀 Phase 12 — Moteur de Purge Hybride (Toxic Link Detector)
+
+**Priorité : HAUTE — Focus Santé Sémantique**
+
+**Objectif :** Nettoyer les silos en identifiant les liens "parasites" via le score de toxicité hybride.
+
+### Tâche 1 — Backend & Réglages (PHP)
+- [ ] **Settings API** : Ajouter l'option `sil_toxicity_threshold` (Défaut : 0.4) dans l'onglet Expert.
+- [ ] **Moteur de Contexte** : Développer une fonction `get_link_context($source_id, $target_id)` qui extrait le paragraphe (Gutenberg ou classique) entourant le lien `<a>`.
+- [ ] **Calculateur de Toxicité** : 
+  - Formule : `Score = (1 - Similarité_Embedding) * Performance_GSC`.
+  - Marquer comme `TOXIC` si Similarité < `sil_toxicity_threshold`.
+
+### Tâche 2 — Interface "Swiss Purge" (JS/UI)
+- [ ] **Vue Dédiée** : Créer un tableau de bord de purge dans le style Swiss.
+- [ ] **Conteneur de Contexte** : Afficher un snippet du texte original pour chaque lien suspect (Vérification humaine).
+- [ ] **Action Groupée** : Bouton `[✂️ Purge Automatique]` pour tous les liens sous le seuil sans performance GSC.
+
+---
+
+## 🎨 Phase 13 — Migration Globale Swiss Precision (Total Rebranding)
+
+**Priorité : MOYENNE — Focus Identité & UX**
+
+**Objectif :** Abandonner définitivement les styles WordPress génériques pour une interface "Premium/Tech" cohérente.
+
+### Étape 1 : Fondations (Design System)
+- [ ] **Design Tokens** : Unifier les variables CSS (Colors: Black/White/Slate/Blue, Typography: Inter/Mono, Spacing: 4px grid).
+- [ ] **SVG Library** : Remplacement final des derniers emojis par les icônes Lucide/Heroicons (Audit complet).
+
+### Étape 2 : Composants Atomiques (Swiss UI)
+- [ ] **Boutons & Inputs** : Bordures noires `1px` ou `2px`, ombres portées solides (Sharp shadows), pas de dégradés.
+- [ ] **Modales** : Refonte de la `BridgeModal` vers le format Swiss (Header noir, corps blanc, haute lisibilité).
+
+### Étape 3 : Migration des Vues
+- [ ] **Pilot Center** : Passage au mode Swiss (Tableaux haute densité).
+- [ ] **Cartographie** : Standardisation sur la vue "Plan d'Architecte" (Swiss).
+- [ ] **Réglages** : Simplification visuelle des formulaires (Style "Formulaires Techniques").
+
+---
+
+📋 Note : Phase 12 & 13 ajoutées le 2026-04-19 suite au brainstorm sur la toxicité et l'identité visuelle.
+
+---
+
+## 🚀 Phase 14 — Swiss Elite Booster (Précision Chirurgicale & Drip-Feed)
+
+**Priorité : HAUTE — Focus Stratégie & Sécurité**
+
+**Objectif :** Transformer le maillage en un moteur de précision "Elite" qui respecte la densité saine du site et évite la suroptimisation via un système de quotas adaptatifs et de verrous temporels.
+
+### Tâche 1 — Quotas Adaptatifs & Mode Pilier (Logic)
+- [ ] **Ratio de Densité** : Implémenter le calcul `Quota = ceil(Total_Pages * Ratio)`. (Ratio par défaut : 10%).
+- [ ] **Option "Article Pilier"** : Ajouter une meta `_sil_is_pillar` permettant de doubler le quota pour les pages stratégiques (ex: 20%).
+- [ ] **Vision Globale** : S'assurer que le compteur `X / Y` prend en compte les liens SIL + les liens naturels (détectés par la Phase 0).
+
+### Tâche 2 — Moteur Micro-Élite & Context-Peeking (IA)
+- [ ] **Seuil d'Élite** : Imposer un seuil de similarité strict (Défaut : 0.85) pour les suggestions de micro-embeddings.
+- [ ] **Context-Peeking** : Si un paragraphe source est trop court (< 150 caractères), agréger les paragraphes voisins pour la vectorisation afin de garantir un match sémantique stable.
+- [ ] **Badges de Qualité** : Afficher les suggestions sous le seuil avec un avertissement "⚠️ Qualité Faible".
+
+### Tâche 3 — Sécurité "Drip-Feed" (Cooldown)
+- [ ] **Verrou de 14 jours** : Enregistrer le timestamp du dernier boost vers une cible. Désactiver le bouton "Booster" si la dernière action date de moins de 14 jours.
+- [ ] **Timer UI** : Afficher le temps restant avant la prochaine action possible ("Dispo dans X jours").
+
+### Tâche 4 — Interface de Pilotage (Swiss UI)
+- [ ] **Jauge de Saturation** : Intégrer l'indicateur `Links: 2/5` sur chaque ligne d'action du Pilot Center.
+- [ ] **Réglages Expert** : Ajouter les curseurs de réglage (Ratio, Seuil, Délai) dans l'onglet Expert de SIL.
+
+---
+
+📋 Note : Phase 14 planifiée le 2026-04-19. Mise en place prévue le 2026-04-20.
+
+---
+
+## 🚀 Phase 15 — Carte d'Autorité Thématique (Swiss Projection)
+
+**Priorité : STRATÉGIQUE — Focus Analyse Sémantique Pure**
+
+**Objectif :** Basculer d'une visualisation de "liens" vers une visualisation de "sens". Les articles sont positionnés mathématiquement selon leur proximité vectorielle (Nuage Libre), révélant la structure thématique réelle avant même le maillage.
+
+### Tâche 1 — Moteur de Projection (JS/Backend)
+- [ ] **Projection 2D (PCA/UMAP)** : Implémenter ou intégrer une bibliothèque de réduction de dimensionnalité pour convertir les embeddings (1536d) en coordonnées (X, Y) stables.
+- [ ] **Coordonnées Persistantes** : Option pour stocker les coordonnées calculées en meta afin de garantir une stabilité visuelle totale entre les sessions.
+- [ ] **Mode "Preset" Cytoscape** : Configurer le layout pour utiliser les positions fixes au lieu du moteur de forces `cose`.
+
+### Tâche 2 — Géographie des Silos (Visualisation)
+- [ ] **Suppression des Boîtes** : Abandonner les "Compound Nodes" au profit d'un nuage libre.
+- [ ] **Fond de Carte (Heatmap/Voronoi)** : Créer une couche de fond (canvas) qui colore les régions de l'écran selon le silo dominant, créant une véritable "carte géographique" des thématiques.
+- [ ] **Détection de Superposition** : Mettre en évidence visuelle les zones où deux silos se chevauchent (conflit sémantique).
+
+### Tâche 3 — Maillage Superposé (Audit de Tension)
+- [ ] **Rendu des Liens Toujours Visibles** : Maintenir tous les liens HTML tracés sur la carte sémantique.
+- [ ] **Indicateur de Tension** : Plus un lien est long (reliant deux points sémantiquement éloignés), plus il est coloré vers le rouge/orange pour signaler une fuite.
+- [ ] **Filtrage des Liens** : Ajouter un curseur pour masquer les liens "faibles" et ne garder que l'infrastructure majeure du site.
+
+### Tâche 4 — Édition Topologique en Drag & Drop ("God Mode")
+- [ ] **Action Directe** : Permettre à l'utilisateur de lier ou délier des articles directement depuis le graphe en dessinant des liens entre les bulles.
+- [ ] **Génération IA Asynchrone** : Le geste de Drag & Drop génère automatiquement les "ponts sémantiques" via l'IA en tâche de fond.
+- [ ] **Feedback Visuel** : Gérer les états d'attente (loaders sur les edges) et de succès/erreur directement sur le canvas interactif.
+
+---
+
+📋 Note : Phase 15 planifiée le 2026-04-24. Bascule sur la logique "Semantic-First". Option "God Mode" ajoutée suite au brainstorm du 2026-04-29.

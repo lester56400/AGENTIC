@@ -1,8 +1,39 @@
 (function($) {
     "use strict";
     $(function () {
+
+    // Fallback for silNotify/silToast (admin.js is NOT loaded on Cartographie page)
+    if (typeof window.silNotify !== 'function') {
+        window.silNotify = function(msg, type) {
+            console.warn('SIL Notify (' + (type || 'info') + '):', msg);
+            alert((type === 'error' ? '❌ ' : '✅ ') + msg);
+        };
+    }
+    if (typeof window.silToast !== 'function') {
+        window.silToast = window.silNotify;
+    }
+    if (typeof window.escHtml !== 'function') {
+        window.escHtml = function(text) {
+            var map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+            return text ? String(text).replace(/[&<>"']/g, function(m) { return map[m]; }) : '';
+        };
+    }
+    if (typeof window.escAttr !== 'function') {
+        window.escAttr = window.escHtml;
+    }
+
     let cy = null;
     let rawGraphData = null;
+
+    // Debounce helper for search
+    function debounce(func, wait) {
+        let timeout;
+        return function() {
+            const context = this, args = arguments;
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(context, args), wait);
+        };
+    }
     const $container = $('#sil-graph-container');
     const vibrantColors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#14b8a6'];
 
@@ -71,7 +102,7 @@
         e.preventDefault();
         if (!cy) return;
 
-        // "Audit AI" Format with Metadata
+        // "Audit AI" Format with Metadata — Enrichi pour exploitation LLM
         const graphData = {
             metadata: {
                 site_url: window.location.hostname,
@@ -79,10 +110,12 @@
                 node_count: cy.nodes('[^is_silo_parent]').length,
                 edge_count: cy.edges().length,
                 sil_version: "2.5",
-                features: ["sil_pagerank", "permeability", "semantic_collision", "opportunities", "decay_critical"]
+                features: ["sil_pagerank", "permeability", "semantic_collision", "opportunities", "decay_critical"],
+                silo_distances: (rawGraphData && rawGraphData.metadata && rawGraphData.metadata.silo_distances) ? rawGraphData.metadata.silo_distances : {}
             },
             elements: cy.elements().map(el => el.data()),
-            opportunities: (rawGraphData && rawGraphData.opportunities) ? rawGraphData.opportunities : {}
+            opportunities: (rawGraphData && rawGraphData.opportunities) ? rawGraphData.opportunities : {},
+            stats_summary: (rawGraphData && rawGraphData.stats_summary) ? rawGraphData.stats_summary : {}
         };
 
         const blob = new Blob([JSON.stringify(graphData, null, 2)], {type: 'application/json'});
@@ -104,14 +137,24 @@
 
     function loadGraphData() {
         updateStatus(20, '\u00c9tape 1/3 : Extraction', 'Lecture des liens et statistiques GSC\u2026');
+        
+        const loadingTimeout = setTimeout(() => {
+            if ($('#sil-graph-loading').is(':visible')) {
+                console.error("SIL Graph: Timeout reached");
+                handleGraphError("Le chargement du graphe a expiré (Timeout de 20s). Réduisez le nombre d'articles ou vérifiez vos logs PHP.");
+            }
+        }, 20000);
+
         $.post(silSharedData.ajaxurl || ajaxurl, {
             action: 'sil_get_graph_data',
             nonce: silSharedData.nonce
         }, function(response) {
+            console.log("SIL Graph: Data received", response.data ? (response.data.nodes ? response.data.nodes.length : 0) + " nodes" : "EMPTY");
             if (response.success) {
                 rawGraphData = response.data;
                 updateStatus(75, '\u00c9tape 2/3 : Analyse', 'Calcul des silos s\u00e9mantiques\u2026');
                 setTimeout(() => {
+                    clearTimeout(loadingTimeout);
                     updateStatus(100, '\u00c9tape 3/3 : Rendu', 'G\u00e9n\u00e9ration de la carte\u2026');
                     processGraphData(response.data);
                 }, 100);
@@ -210,8 +253,37 @@
         }
     }
 
+    // PHASE 15: Detect if semantic projection is available
+    let hasProjection = false;
+    let projectionCoords = {};
+    console.log('[SIL] Graph Engine Init');
+
     function renderCytoscape(data, maxPagerank, maxWeight, siloLabels) {
+        // Save to global for modules (Audit Rescue)
+        window.silGraphData = data;
+        
         try {
+            // --- PHASE 15: Semantic Projection Mode ---
+            if (data && data.metadata && data.metadata.projection_coords) {
+                hasProjection = true;
+                projectionCoords = data.metadata.projection_coords;
+                console.log('[SIL] Semantic Projection detected:', Object.keys(projectionCoords).length, 'nodes');
+
+                // Inject coordinates and strip 'parent' from article nodes
+                if (data.nodes) {
+                    data.nodes.forEach(node => {
+                        const postId = String(node.data.id);
+                        if (projectionCoords[postId]) {
+                            node.data.sem_x = parseFloat(projectionCoords[postId].x);
+                            node.data.sem_y = parseFloat(projectionCoords[postId].y);
+                        }
+                        if (node.data && !node.data.is_silo_parent) {
+                            delete node.data.parent;
+                        }
+                    });
+                }
+            }
+
             // Init Cytoscape
             cy = cytoscape({
                 container: $container[0],
@@ -241,6 +313,7 @@
                     {
                         selector: 'node[is_silo_parent = "true"]',
                         style: {
+                            'display': hasProjection ? 'none' : 'element',
                             'label': 'data(label)',
                             'shape': 'roundrectangle',
                             'background-opacity': 0.15,
@@ -288,6 +361,17 @@
                         style: { 'border-width': 5, 'border-color': '#f97316', 'border-style': 'double' }
                     },
                     {
+                        selector: 'node[is_anchor="true"]',
+                        style: { 
+                            'shape': 'diamond', 
+                            'border-width': 6, 
+                            'border-color': '#2563eb', 
+                            'border-style': 'solid',
+                            'width': '180px',
+                            'height': '180px'
+                        }
+                    },
+                    {
                         selector: 'node[is_bridge="true"]',
                         style: { 'border-width': 6, 'border-color': '#eab308', 'border-style': 'double', 'shape': 'hexagon' }
                     },
@@ -306,6 +390,14 @@
                             'border-color': '#eab308', 
                             'border-style': 'solid'
                         }
+                    },
+                    {
+                        selector: '.ghost-edge',
+                        style: {
+                            'visibility': 'hidden',
+                            'width': 0,
+                            'curve-style': 'haystack' // High performance for invisible edges
+                        }
                     }
                 ]
             });
@@ -314,32 +406,47 @@
             return;
         }
 
-        // Executer le layout de maniere controle et explicite
-        const layout = cy.layout({
+        // PHASE 15: Layout hybride — Cose (Topologique) initialisé sur PCA (Sémantique)
+        if (hasProjection) {
+            cy.nodes().forEach(node => {
+                const id = node.id();
+                if (projectionCoords[id]) {
+                    node.position({ x: projectionCoords[id].x, y: projectionCoords[id].y });
+                } else {
+                    node.position({ x: 0, y: 0 });
+                }
+            });
+        }
+
+        const layoutConfig = {
             name: 'cose',
-            nodeDimensionsIncludeLabels: false, // Vital pour éviter le chevauchement des textes
-            idealEdgeLength: 150,      // Plus d'espace pour la clarté
-            nodeOverlap: 40,
+            nodeDimensionsIncludeLabels: true, // Évite la superposition des étiquettes de texte
+            idealEdgeLength: hasProjection ? 50 : 150, // Ressorts plus courts si la position de base est déjà bonne
+            nodeOverlap: 60,
             refresh: 20,
             fit: true,
             padding: 50,
-            randomize: false,
-            componentSpacing: parseInt(silSharedData.spacing) || 120,      // Plus d'écart entre silos        
+            randomize: !hasProjection, // Utilise les positions PCA comme point de départ si disponibles
+            componentSpacing: parseInt(silSharedData.spacing) || 120,
             nodeRepulsion: function( node ){ 
-                let baseRepulsion = parseInt(silSharedData.repulsion) || 8000; // Réduit drastiquement
-                return baseRepulsion + (node.width() * 50); 
+                let baseRepulsion = parseInt(silSharedData.repulsion) || 8000;
+                // Répulsion légèrement adoucie en mode PCA pour ne pas faire exploser les clusters
+                return hasProjection ? (baseRepulsion * 0.5) + (node.width() * 50) : baseRepulsion + (node.width() * 50); 
             }, 
             gravity: parseFloat(silSharedData.gravity) || 1.5,                      
-            edgeElasticity: function( edge ){ return 100; },
-            nestingFactor: 1.2,
-            numIter: 1000,
-            initialTemp: 200,
+            edgeElasticity: function( edge ){ 
+                return edge.data('is_ghost') ? 50 : 100; 
+            },
+            nestingFactor: 0.8,
+            numIter: hasProjection ? 500 : 1500, // Moins d'itérations nécessaires si on part de la PCA
+            initialTemp: hasProjection ? 50 : 200, // Température initiale basse = micro-ajustements
             coolingFactor: 0.95,
             minTemp: 1.0,
             animate: false
-        });
-        
-        layout.run(); // Bloquant puisque animate: false
+        };
+
+        const layout = cy.layout(layoutConfig);
+        layout.run();
 
         // Repositionner Silo 0 apres le layout
         try {
@@ -371,6 +478,170 @@
         }
 
         try { cy.fit(null, 40); } catch (e) {}
+
+        // --- PHASE 15: Canvas Underlay (Silo Heatmap) ---
+        if (hasProjection) {
+            try {
+                const underlayCanvas = document.createElement('canvas');
+                underlayCanvas.id = 'sil-semantic-underlay';
+                underlayCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+                $container[0].insertBefore(underlayCanvas, $container[0].firstChild);
+
+                function drawSiloHeatmap() {
+                    const canvas = document.getElementById('sil-semantic-underlay');
+                    if (!canvas || !cy) return;
+                    const rect = $container[0].getBoundingClientRect();
+                    canvas.width = rect.width;
+                    canvas.height = rect.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    // Group article nodes by cluster_id
+                    const clusterNodes = {};
+                    cy.nodes().forEach(n => {
+                        if (n.data('is_silo_parent')) return;
+                        const cid = n.data('cluster_id');
+                        if (!cid || cid === '0' || cid === '1000') return;
+                        if (!clusterNodes[cid]) clusterNodes[cid] = [];
+                        const rp = n.renderedPosition();
+                        clusterNodes[cid].push(rp);
+                    });
+
+                    Object.keys(clusterNodes).forEach(cid => {
+                        const points = clusterNodes[cid];
+                        if (points.length < 2) return;
+
+                        // Barycentre 2D
+                        let cx = 0, cy2 = 0;
+                        points.forEach(p => { cx += p.x; cy2 += p.y; });
+                        cx /= points.length;
+                        cy2 /= points.length;
+
+                        // Rayon = écart-type
+                        let variance = 0;
+                        points.forEach(p => {
+                            variance += (p.x - cx) ** 2 + (p.y - cy2) ** 2;
+                        });
+                        const radius = Math.max(80, Math.sqrt(variance / points.length) * 1.8);
+
+                        const color = getColorForCluster(cid);
+                        const grad = ctx.createRadialGradient(cx, cy2, 0, cx, cy2, radius);
+                        grad.addColorStop(0, color + '22');
+                        grad.addColorStop(0.5, color + '11');
+                        grad.addColorStop(1, color + '00');
+
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy2, radius, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+                }
+
+                cy.on('render viewport', drawSiloHeatmap);
+                setTimeout(drawSiloHeatmap, 300);
+            } catch (heatmapErr) {
+                console.warn('[SIL] Heatmap underlay error:', heatmapErr);
+            }
+
+            // --- PHASE 15: Edge Tension Coloring ---
+            try {
+                cy.edges().forEach(edge => {
+                    if (edge.hasClass('ghost-edge')) return;
+                    const s = cy.getElementById(edge.data('source'));
+                    const t = cy.getElementById(edge.data('target'));
+                    if (!s.length || !t.length) return;
+                    const dx = s.position('x') - t.position('x');
+                    const dy = s.position('y') - t.position('y');
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const ratio = Math.min(1, dist / 1200);
+                    const r = Math.round(20 + ratio * 219);
+                    const g = Math.round(185 - ratio * 145);
+                    const b = Math.round(80 - ratio * 40);
+                    edge.style('line-color', `rgb(${r}, ${g}, ${b})`);
+                    edge.style('target-arrow-color', `rgb(${r}, ${g}, ${b})`);
+                    edge.data('_sem_dist', dist);
+                    edge.data('_tension_ratio', Math.min(1, dist / 1200));
+                });
+            } catch (tensionErr) {
+                console.warn('[SIL] Edge tension coloring error:', tensionErr);
+            }
+
+            // --- PHASE 15: Calculate Semantic Relevance Scores ---
+            if (hasProjection) {
+                console.log('[SIL] Computing semantic relevance for edges...');
+                cy.edges().forEach(edge => {
+                    const source = edge.source();
+                    const target = edge.target();
+                    if (source.data('sem_x') !== undefined && target.data('sem_x') !== undefined) {
+                        const dx = source.data('sem_x') - target.data('sem_x');
+                        const dy = source.data('sem_y') - target.data('sem_y');
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        // Normalisation : 0 dist = 100% pertinence, 0.8 dist = 0% pertinence
+                        const relevance = Math.max(0, 1.0 - (dist / 0.8));
+                        edge.data('_relevance_score', relevance);
+                    } else {
+                        edge.data('_relevance_score', 1.0); // Liens non sémantiques forcés
+                    }
+                });
+            }
+
+            // Note: The audit listeners are now managed globally at the end of the init block
+            // to ensure they are active even if renderCytoscape is delayed.
+        }
+
+        // --- GLOBAL AUDIT HANDLERS (Delegated to SIL_Audit) ---
+        $(document).off('click', '#sil-apply-audit').on('click', '#sil-apply-audit', function() {
+            const activeCy = cy; 
+            if (!activeCy) {
+                window.silToast('Attente du chargement du graphe...', 'info');
+                return;
+            }
+
+            const $btn = $(this);
+            const $progress = $('#sil-audit-progress-container');
+            const $bar = $('#sil-audit-progress-bar');
+            const $status = $('#sil-audit-status');
+            const mode = $('#sil-tension-selector').val();
+            
+            console.log('[SIL] Audit Trigger (Delegated) - Mode:', mode);
+            
+            $btn.prop('disabled', true).text('ANALYSE... ⏳');
+            $progress.show();
+            $status.show().text('Calcul des plages relatives (Algorithme Amplitude)...');
+            $bar.css('width', '25%');
+
+            setTimeout(() => {
+                if (typeof window.SIL_Audit === 'undefined') {
+                    console.error('[SIL] Moteur d\'audit non chargé.');
+                    $btn.prop('disabled', false).text('ERREUR');
+                    return;
+                }
+
+                window.SIL_Audit.apply(activeCy, mode, function(visible, hidden, buckets, error) {
+                    if (error === 'no_data') {
+                        $bar.css('width', '100%').css('background', '#ef4444');
+                        $status.text('ERREUR : Aucun Audit Sémantique possible. Veuillez cliquer sur "Indexer tout le contenu" d\'abord.');
+                        if (typeof window.silToast === 'function') window.silToast('Audit impossible : Indexation manquante.', 'error');
+                        return;
+                    }
+                    $bar.css('width', '100%').css('background', '#3b82f6');
+                    $status.text(`Audit terminé : ${visible} visibles, ${hidden} masqués.`);
+                    
+                    if (buckets) {
+                        console.log('[SIL] Amplitude détectée :', buckets.amplitude.toFixed(3));
+                    }
+                });
+                
+                activeCy.resize();
+
+                setTimeout(() => {
+                    $btn.prop('disabled', false).text('FILTRER 🔍');
+                    setTimeout(() => { $progress.fadeOut(); $status.fadeOut(); }, 4000);
+                }, 500);
+            }, 100);
+        });
+        // --- END GLOBAL AUDIT HANDLERS ---
+
         $('#sil-graph-loading').fadeOut(300);
 
         // NOUVEAU : Auto-focus basé sur l'URL
@@ -424,7 +695,8 @@
             let matchedNodes = cy.collection();
             cy.nodes('[^is_silo_parent]').forEach(n => {
                 const label = (n.data('label') || '').toLowerCase();
-                if (label.includes(search)) {
+                const idStr = String(n.data('id') || '');
+                if (label.includes(search) || idStr.includes(search)) {
                     matchedNodes = matchedNodes.add(n);
                 } else {
                     n.addClass('dimmed');
@@ -466,6 +738,7 @@
                 const isIntruder = d.is_intruder || node.data('is_intruder') === 'true' || node.data('is_intruder') === true;
                 const isPivot     = node.data('is_pivot') === 'true' || node.data('is_pivot') === true;
                 const isStrategic = node.data('is_strategic') === 'true' || node.data('is_strategic') === true;
+                const isAnchor    = node.data('is_anchor') === 'true' || node.data('is_anchor') === true;
                 const hasReciprocity = node.data('has_reciprocal_link') === 'true' || node.data('has_reciprocal_link') === true;
                 const cornerstoneId = node.data('cornerstone_id');
 
@@ -476,6 +749,10 @@
                 let html = '<div style="border-top:4px solid ' + color + ';padding-top:12px;">';
                 
                 // Alert Badges
+                if (isAnchor) {
+                    html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;display:flex;align-items:center;gap:8px;">💎 <strong style="color:#1d4ed8;">Ancre de Silo (Stabilité)</strong> — Point de repère sémantique pour ce cocon.</div>';
+                }
+
                 if (isStrategic) {
                     html += '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px;display:flex;align-items:center;gap:8px;">' + silSharedData.icons.star + ' <strong style="color:#b45309;">Pilier de Silo (Cornerstone)</strong> — Page d\'autorité principale.</div>';
                 }
@@ -574,14 +851,29 @@
                     html += '<div style="margin-bottom:12px;"><strong style="font-size:10px;text-transform:uppercase;color:#94a3b8;">Silo Actuel</strong><br><span style="background:' + color + '15; color:' + color + '; padding:4px 10px; border-radius:15px; font-size:12px; font-weight:700; border:1px solid ' + color + '33;">' + siloLabel + '</span></div>';
                 }
 
+                // Manual Bridge creation
+                html += '<div style="margin-top:20px; border-top:1px solid #cbd5e1; padding-top:15px; position:relative;">';
+                html += '<h4 style="margin:0 0 5px; font-size:13px; color:#1e293b;">🔍 Chercher une Cible Manuelle</h4>';
+                html += '<p style="font-size:11px; color:#64748b; margin:0 0 10px;">Renforcez le maillage en liant vers un article thématique.</p>';
+                html += '<input type="text" class="sil-search-target" data-source-id="' + postId + '" placeholder="Saisissez le titre d\'article cible..." style="width:100%; font-size:12px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;">';
+                html += '<div class="sil-search-results" style="display:none; max-height:180px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; position:absolute; width:100%; z-index:1000; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); border-radius:0 0 6px 6px; margin-top:-1px;"></div>';
+                html += '<div class="sil-anchor-suggestions" style="display:none; margin-top:12px; font-size:11px; padding:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">';
+                html += '<p style="color:#475569; margin:0 0 8px 0; font-weight:700; text-transform:uppercase; font-size:9px;">Ancres GSC / Suggestions :</p>';
+                html += '<div class="sil-chip-container" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>';
+                html += '<div style="border-top: 1px dashed #cbd5e1; padding-top:10px; display:flex; gap:8px;">';
+                html += '<button class="button button-primary sil-manual-bridge-trigger" id="sil-sidebar-manual-btn" data-source="' + postId + '" style="flex:1; font-size:10px;">🌉 Créer le prompt pour le pont</button>';
+                html += '</div>';
+                html += '</div>';
+                html += '</div>';
+
                 // SEO Data
-                html += '<div style="background:#f1f5f9; border-radius:8px; padding:12px; margin-bottom:15px; border-left:4px solid #3b82f6;">';
+                html += '<div style="background:#f1f5f9; border-radius:8px; padding:12px; margin-top:20px; border-left:4px solid #3b82f6;">';
                 html += '<strong style="font-size:10px; text-transform:uppercase; color:#64748b;">SEO (RankMath)</strong>';
                 html += '<div id="sil-seo-title-display" style="margin:6px 0 4px; font-size:12px; font-weight:700; color:#0f172a;">' + (d.seo_title || nodeLabel) + '</div>';
                 html += '<div id="sil-seo-meta-display" style="font-size:11px; color:#475569; line-height:1.4;">' + (d.seo_meta || 'Aucune meta description d\u00e9tect\u00e9e.') + '</div>';
                 html += '</div>';
 
-                html += '<button class="button sil-ai-seo-btn" data-post-id="' + postId + '" style="width:100%; margin-bottom:12px; font-size:12px; background:#fff; border-color:#d1d5db;">\u2728 R\u00e9\u00e9crire via IA</button>';
+                html += '<button class="button sil-ai-seo-btn" data-post-id="' + postId + '" style="width:100%; margin-top:12px; margin-bottom:12px; font-size:12px; background:#fff; border-color:#d1d5db;">\u2728 R\u00e9\u00e9crire via IA</button>';
                 html += '<div id="sil-seo-ai-result" style="display:none;margin-bottom:15px;padding:12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;font-size:12px;box-shadow:0 1px 2px rgba(0,0,0,0.05);"></div>';
 
                 // Recommendations Section
@@ -626,21 +918,6 @@
                     html += '</div>';
                 }
 
-                // Manual Bridge creation
-                html += '<div style="margin-top:20px; border-top:1px solid #cbd5e1; padding-top:15px; position:relative;">';
-                html += '<h4 style="margin:0 0 5px; font-size:13px; color:#1e293b;">🔍 Chercher une Cible Manuelle</h4>';
-                html += '<p style="font-size:11px; color:#64748b; margin:0 0 10px;">Renforcez le maillage en liant vers un article thématique.</p>';
-                html += '<input type="text" class="sil-search-target" data-source-id="' + postId + '" placeholder="Saisissez le titre d\'article cible..." style="width:100%; font-size:12px; padding:8px; border-radius:6px; border:1px solid #cbd5e1;">';
-                html += '<div class="sil-search-results" style="display:none; max-height:180px; overflow-y:auto; background:#fff; border:1px solid #cbd5e1; position:absolute; width:100%; z-index:1000; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); border-radius:0 0 6px 6px; margin-top:-1px;"></div>';
-                html += '<div class="sil-anchor-suggestions" style="display:none; margin-top:12px; font-size:11px; padding:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">';
-                html += '<p style="color:#475569; margin:0 0 8px 0; font-weight:700; text-transform:uppercase; font-size:9px;">Ancres GSC / Suggestions :</p>';
-                html += '<div class="sil-chip-container" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>';
-                html += '<div style="border-top: 1px dashed #cbd5e1; padding-top:10px; display:flex; gap:8px;">';
-                html += '<button class="button button-primary sil-manual-bridge-trigger" id="sil-sidebar-manual-btn" data-source="' + postId + '" style="flex:1; font-size:10px;">🌉 Créer le prompt pour le pont</button>';
-                html += '</div>';
-                html += '</div>';
-                html += '</div>';
-
                 // Actions Footer
                 html += '<div style="margin-top:18px; border-top:1px solid #e2e8f0; padding-top:15px; display:flex; gap:8px;">';
                 if (d.edit_url) html += '<a href="' + d.edit_url + '" target="_blank" class="button button-secondary" style="flex:1; text-align:center; text-decoration:none; font-size:12px;">\u270f\ufe0f \u00c9diter</a>';
@@ -666,27 +943,57 @@
                 }, function(res) {
                     const $list = $('#sil-missing-inlinks-list');
                     if (res.success && res.data && res.data.suggestions && res.data.suggestions.length > 0) {
-                        let listHtml = '<ul style="margin:0; padding:0; list-style:none;">';
-                        res.data.suggestions.forEach(item => {
-                            listHtml += `<li style="margin-bottom:10px; padding:10px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; font-size:11px;">
-                                <div style="font-weight:700; color:#1e293b; margin-bottom:5px;">${item.title}</div>
-                                <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span style="color:#059669; font-weight:700;">Similarity: ${item.similarity}%</span>
-                                    <button class="button button-small sil-reco-bridge-btn sil-manual-bridge-trigger" 
-                                            data-source="${item.id}" 
-                                            data-target="${postId}" 
-                                            data-title="${nodeLabel.replace(/"/g,'&quot;')}" 
-                                            style="font-size:10px; height:24px; line-height:22px;">
-                                        🔗 Lier vers ici
-                                    </button>
-                                </div>
-                            </li>`;
-                        });
-                        listHtml += '</ul>';
+                        let nativeList = res.data.suggestions.filter(s => s.is_native);
+                        let bridgeList = res.data.suggestions.filter(s => !s.is_native);
+                        
+                        let listHtml = '';
+                        
+                        if (nativeList.length > 0) {
+                            listHtml += `<div style="padding:10px 0 5px; font-size:11px; font-weight:800; color:#1e293b; text-transform:uppercase; letter-spacing:0.05em;">🎯 Même Silo (Rectangle)</div>`;
+                            listHtml += '<ul style="margin:0 0 15px 0; padding:0; list-style:none;">';
+                            nativeList.forEach(item => {
+                                listHtml += `<li class="sil-staggered sil-glass-card" style="margin-bottom:8px; padding:12px; font-size:11px; border-left: 3px solid #6366f1;">
+                                    <div style="font-weight:700; color:#1e293b; margin-bottom:5px;">${item.title}</div>
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span style="color:#6366f1; font-weight:700;">Affinité: ${item.similarity}%</span>
+                                        <button class="button button-small sil-manual-bridge-trigger" 
+                                                data-source="${item.id}" 
+                                                data-target="${postId}" 
+                                                data-title="${escapeHtml(nodeLabel)}" 
+                                                style="font-size:10px; height:24px; line-height:22px; background:#6366f1; color:#fff; border:none;">
+                                            🔗 Lier
+                                        </button>
+                                    </div>
+                                </li>`;
+                            });
+                            listHtml += '</ul>';
+                        }
+                        
+                        if (bridgeList.length > 0) {
+                            listHtml += `<div style="padding:10px 0 5px; font-size:11px; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">🌉 Ponts Sémantiques (Voisins)</div>`;
+                            listHtml += '<ul style="margin:0; padding:0; list-style:none;">';
+                            bridgeList.forEach(item => {
+                                listHtml += `<li class="sil-staggered sil-glass-card" style="margin-bottom:8px; padding:12px; font-size:11px; border-left: 3px solid #94a3b8; opacity: 0.8;">
+                                    <div style="font-weight:700; color:#64748b; margin-bottom:5px;">${item.title} <small style="font-weight:400; color:#94a3b8;">(Silo ${item.primary_silo_id})</small></div>
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span style="color:#94a3b8; font-weight:700;">Affinité: ${item.similarity}%</span>
+                                        <button class="button button-small sil-manual-bridge-trigger" 
+                                                data-source="${item.id}" 
+                                                data-target="${postId}" 
+                                                data-title="${escapeHtml(nodeLabel)}" 
+                                                style="font-size:10px; height:24px; line-height:22px; border-color:#cbd5e1; color:#64748b;">
+                                            🔗 Créer pont
+                                        </button>
+                                    </div>
+                                </li>`;
+                            });
+                            listHtml += '</ul>';
+                        }
+                        
                         $list.html(listHtml);
                     } else {
                         const msg = (res.data && res.data.message) ? res.data.message : 'Aucune opportunité détectée dans ce silo.';
-                        $list.html('<p style="font-size:11px; color:#64748b; font-style:italic;">' + msg + '</p>');
+                        $list.html('<p style="font-size:11px; color:#64748b; font-style:italic; padding:10px;">' + msg + '</p>');
                     }
                 }).fail(function() {
                     $('#sil-missing-inlinks-list').html('<p style="font-size:11px; color:#ef4444;">Erreur lors du chargement des opportunités.</p>');
@@ -715,19 +1022,26 @@
                 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Outfit:wght@100..900&display=swap" rel="stylesheet">
                 <style id="sil-premium-styles">
                     #sil-graph-sidebar {
-                        background: rgba(255, 255, 255, 0.7) !important;
-                        backdrop-filter: blur(20px) !important;
-                        -webkit-backdrop-filter: blur(20px) !important;
-                        border-left: 1px solid rgba(255, 255, 255, 0.3) !important;
-                        box-shadow: -10px 0 30px rgba(0,0,0,0.05) !important;
+                        background: rgba(255, 255, 255, 0.95) !important;
+                        backdrop-filter: blur(10px) !important;
+                        border-left: 2px solid #000 !important;
+                        box-shadow: -10px 0 30px rgba(0,0,0,0.1) !important;
                         font-family: 'DM Sans', sans-serif !important;
                     }
+                    .sil-swiss-mode #sil-graph-sidebar {
+                        background: #fff !important;
+                        border-left: 4px solid #000 !important;
+                        font-family: 'Inter', sans-serif !important;
+                    }
                     .sil-premium-header { font-family: 'Outfit', sans-serif !important; font-weight: 700; letter-spacing: -0.02em; }
-                    .sil-staggered { opacity: 0; transform: translateY(10px); animation: sil-fade-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-                    .sil-staggered-1 { animation-delay: 0.1s; }
-                    .sil-staggered-2 { animation-delay: 0.2s; }
-                    .sil-staggered-3 { animation-delay: 0.3s; }
-                    .sil-staggered-4 { animation-delay: 0.4s; }
+                    .sil-swiss-mode .sil-premium-header { font-family: 'Inter', sans-serif !important; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 900; }
+                    
+                    .sil-staggered { opacity: 0; transform: translateY(10px); animation: sil-fade-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+                    .sil-staggered-1 { animation-delay: 0.05s; }
+                    .sil-staggered-2 { animation-delay: 0.1s; }
+                    .sil-staggered-3 { animation-delay: 0.15s; }
+                    .sil-staggered-4 { animation-delay: 0.2s; }
+                    
                     @keyframes sil-fade-in {
                         to { opacity: 1; transform: translateY(0); }
                     }
@@ -736,13 +1050,24 @@
                         border: 1px solid rgba(255, 255, 255, 0.8);
                         border-radius: 12px;
                         padding: 16px;
-                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
                         transition: all 0.3s ease;
                     }
-                    .sil-glass-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08); }
+                    .sil-swiss-mode .sil-glass-card {
+                        background: #fff;
+                        border: 2px solid #000;
+                        border-radius: 0;
+                        box-shadow: 4px 4px 0 #000;
+                        margin-bottom: 15px;
+                    }
                     .sil-leak-alert { border-radius: 12px; padding: 14px; display: flex; gap: 12px; border: 1px solid transparent; }
+                    .sil-swiss-mode .sil-leak-alert { border-radius: 0; border: 2px solid #000; font-family: var(--sil-swiss-mono); }
+                    
                     .sil-leak-safe { background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-color: #86efac; color: #166534; }
                     .sil-leak-danger { background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%); border-color: #fecdd3; color: #9f1239; }
+                    
+                    .sil-swiss-mode .sil-leak-safe { background: #fff !important; border-color: #10b981 !important; color: #10b981 !important; }
+                    .sil-swiss-mode .sil-leak-danger { background: #000 !important; border-color: #ef4444 !important; color: #ef4444 !important; }
                     .sil-action-btn { 
                         display: block; width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; 
                         background: #fff; color: #1e293b; font-weight: 600; text-align: center; cursor: pointer;
@@ -790,7 +1115,10 @@
             }, function(response) {
                 if (response.success) {
                     const d = response.data;
-                    d.proximity = proximityScore;
+                    // Use backend proximity if available, otherwise fallback to visual distance
+                    if (typeof d.proximity === 'undefined' || d.proximity === 0) {
+                        d.proximity = proximityScore;
+                    }
                 }
                 if (!response.success) {
                     $content.html('<div class="sil-graph-error-box sil-staggered sil-staggered-1"><span>🔍</span><p>Désolé, impossible de charger le contexte :<br><span>' + escapeHtml(response.data || 'Erreur inconnue') + '</span></p></div>');
@@ -801,23 +1129,40 @@
                 let html = '<div style="padding:16px;">';
                 html += '<h4 class="sil-premium-header sil-staggered sil-staggered-1">Inspection du Lien</h4>';
                 
-                html += '<div class="sil-glass-card sil-staggered sil-staggered-2">';
-                html += '<div style="flex:1; text-align:right;"><small>DE</small><strong>' + escapeHtml(d.source_title) + '</strong></div>';
-                html += '<div style="color:#94a3b8; font-size:16px;">→</div>';
-                html += '<div style="flex:1;"><small>VERS</small><strong>' + escapeHtml(d.target_title) + '</strong></div>';
+                html += '<div class="sil-glass-card sil-staggered sil-staggered-2" style="display:flex; flex-direction:column; gap:10px; padding:20px;">';
+                
+                html += '<div style="display:flex; align-items:center; gap:12px;">';
+                html += '<div style="background:#000; color:#fff; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-family:var(--sil-swiss-mono); font-size:10px; font-weight:900; flex-shrink:0;">DE</div>';
+                html += '<div style="font-weight:900; font-size:13px; color:#000; line-height:1.2; flex:1;">' + escapeHtml(d.source_title) + '</div>';
+                html += '</div>';
+
+                html += '<div style="padding-left:36px; color:#000; font-size:18px; font-weight:900;">↓</div>';
+
+                html += '<div style="display:flex; align-items:center; gap:12px;">';
+                html += '<div style="background:#000; color:#fff; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-family:var(--sil-swiss-mono); font-size:10px; font-weight:900; flex-shrink:0;">À</div>';
+                html += '<div style="font-weight:900; font-size:13px; color:#000; line-height:1.2; flex:1;">' + escapeHtml(d.target_title) + '</div>';
+                html += '</div>';
+                
                 html += '</div>';
  
                 if (d.is_leak) {
                     const isSafe = d.leak_percent < d.leak_threshold;
-                    const alertClass = isSafe ? 'sil-leak-safe' : 'sil-leak-danger';
+                    const bgColor = isSafe ? '#f0fdf4' : '#fee2e2';
+                    const borderColor = isSafe ? '#86efac' : '#f87171';
                     const icon = isSafe ? '✨' : '⚠️';
+                    const titleColor = isSafe ? '#166534' : '#b91c1c';
+                    const textColor = isSafe ? '#15803d' : '#7f1d1d';
                     const statusText = isSafe ? 'Fuite Tolérée' : 'Fuite Sémantique !';
 
-                    html += '<div class="sil-leak-alert sil-staggered sil-staggered-3 ' + alertClass + '">';
+                    html += '<div class="sil-staggered sil-staggered-3" style="background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:12px; margin-bottom:15px; font-size:12px; border-radius:6px;">';
+                    html += '<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">';
                     html += '<span>' + icon + '</span>';
-                    html += '<div><strong>' + statusText + ' (' + d.leak_percent + '%)</strong>';
-                    html += '<span>Traversée : <strong>' + escapeHtml(d.source_silo_label) + '</strong> ➔ <strong>' + escapeHtml(d.target_silo_label) + '</strong></span>';
-                    html += '<small>SEUIL TOLÉRÉ : ' + d.leak_threshold + '%</small></div>';
+                    html += '<strong style="color:' + titleColor + ';">' + statusText + ' (' + d.leak_percent + '%)</strong>';
+                    html += '</div>';
+                    html += '<div style="color:' + textColor + '; font-size:11px; line-height:1.4;">';
+                    html += 'Le jus s\'échappe vers <strong>' + escapeHtml(d.target_silo_label) + '</strong>';
+                    html += '<br><small style="opacity:0.7; text-transform:uppercase;">SEUIL : ' + d.leak_threshold + '%</small>';
+                    html += '</div>';
                     html += '</div>';
                 } else {
                     html += '<div class="sil-leak-alert sil-leak-safe sil-staggered sil-staggered-3">';
@@ -983,10 +1328,6 @@
         });
 
         // --- LOGIQUE PONT SÉMANTIQUE ---
-        function debounce(func, wait) {
-            let timeout;
-            return function() { const context = this, args = arguments; clearTimeout(timeout); timeout = setTimeout(() => func.apply(context, args), wait); };
-        }
 
         $(document).on('keyup', '.sil-search-target', debounce(function () {
             const $input = $(this);
@@ -1000,6 +1341,8 @@
                 $anchors.hide();
                 return;
             }
+
+            $results.html('<div style="padding:8px; color:#64748b; font-style:italic;">🔍 Recherche en cours...</div>').show();
 
             $.post(silSharedData.ajaxurl || ajaxurl, {
                 action: 'sil_search_posts_for_link',
@@ -1053,6 +1396,9 @@
 
             if (keywords && keywords.length > 0) {
                 keywords.forEach(kw => {
+                    // Fix unicodes that lost their backslash from PHP json_encode DB saving (e.g. u00e0 -> \u00e0)
+                    kw = kw.replace(/u([0-9a-fA-F]{4})/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+                    
                     let kwEscaped = kw.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                     $chipContainer.append(`<span class="sil-anchor-chip" data-source-id="${sourceId}" data-target-id="${targetId}" data-anchor="${kwEscaped}" style="background:#e0f2fe;color:#0369a1;padding:3px 8px;border-radius:12px;cursor:pointer;border:1px solid #bae6fd;">${kw}</span>`);
                 });
@@ -1164,15 +1510,17 @@
                 }
             });
         });
-
-        $(document).on('click', '.sil-manual-bridge-trigger, .sil-create-bridge-btn, .sil-local-bridge-btn', function () {
+        $(document).on('click', '.sil-create-bridge-btn, .sil-local-bridge-btn', function () {
             const $btn = $(this);
             const sourceId = $btn.data('source');
             const targetId = $btn.data('target');
             const anchorText = $btn.data('anchor');
             
-            if (window.silFetchAndShowBridgePrompt) {
-                window.silFetchAndShowBridgePrompt(sourceId, targetId, anchorText);
+            // Use SIL_Bridge.generate (always available via sil-bridge-manager.js)
+            if (typeof window.SIL_Bridge !== 'undefined') {
+                window.SIL_Bridge.generate(sourceId, targetId, anchorText, $btn);
+            } else {
+                window.silToast('Le moteur du pont sémantique n\'est pas chargé.', 'error');
             }
         });
 

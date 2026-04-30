@@ -2,7 +2,7 @@
 /**
  * Plugin Name: _Smart Internal Links
  * Description: Génère automatiquement des liens internes pertinents grâce aux embeddings et OpenAI. Supporte Articles et Pages.
- * Version: 2.5.4
+ * Version: 2.8.3
  * Author: Jennifer Larcher
  * Author URI: https://redactiwe.systeme.io/formation-redacteur-ia
  * Text Domain: smart-internal-links
@@ -12,20 +12,18 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('SIL_VERSION', '2.5.3');
+define('SIL_VERSION', '2.8.3');
 define('SIL_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SIL_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 class SmartInternalLinks
-{
-
-    private static $instance = null;
+{    private static $instance = null;
     public $table_name;
+    public $micro_table_name;
     private $api_key;
-    public $semantic_silos;
-    public $renderer;
-    public $scanner;
-    public $pilot_engine;
+    
+    // Conteneur pour le lazy loading
+    private $instances = [];
 
     // Types de contenus supportés (Blog + Pages produits/services)
     public $post_types = ['post', 'page'];
@@ -38,6 +36,75 @@ class SmartInternalLinks
         return self::$instance;
     }
 
+    /**
+     * Lazy Loader : Charge les classes et instancie les objets uniquement à la demande.
+     */
+    public function __get($key) {
+        if (isset($this->instances[$key])) {
+            return $this->instances[$key];
+        }
+
+        switch($key) {
+            case 'embeddings':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-embedding-manager.php';
+                $this->instances['embeddings'] = new SIL_Embedding_Manager($this->api_key, $this->table_name, $this->micro_table_name);
+                return $this->instances['embeddings'];
+
+            case 'renderer':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-admin-renderer.php';
+                $this->instances['renderer'] = new SIL_Admin_Renderer($this);
+                return $this->instances['renderer'];
+
+            case 'entity_manager':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-entity-manager.php';
+                $this->instances['entity_manager'] = new SIL_Entity_Manager($this->api_key);
+                return $this->instances['entity_manager'];
+
+            case 'semantic_silos':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-semantic-silos.php';
+                $this->instances['semantic_silos'] = new SIL_Semantic_Silos();
+                return $this->instances['semantic_silos'];
+
+            case 'scanner':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-scanner.php';
+                $this->instances['scanner'] = new SIL_Scanner($this);
+                return $this->instances['scanner'];
+
+            case 'pilot_engine':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-pilot-engine.php';
+                $this->instances['pilot_engine'] = new SIL_Pilot_Engine($this);
+                return $this->instances['pilot_engine'];
+
+            case 'db_manager':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-database-manager.php';
+                $this->instances['db_manager'] = new SIL_Database_Manager();
+                return $this->instances['db_manager'];
+            
+            case 'admin_manager':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-admin-manager.php';
+                $this->instances['admin_manager'] = new SIL_Admin_Manager($this);
+                return $this->instances['admin_manager'];
+
+            case 'ajax_handler':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-ajax-handler.php';
+                $this->instances['ajax_handler'] = new SIL_Ajax_Handler($this);
+                return $this->instances['ajax_handler'];
+
+            case 'cluster_analysis':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-cluster-analysis.php';
+                $this->instances['cluster_analysis'] = new SIL_Cluster_Analysis($this);
+                return $this->instances['cluster_analysis'];
+            
+            case 'centrality_engine':
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-centrality-engine.php';
+                return true; // Solo file, static methods
+        }
+
+
+        return null;
+    }
+
+
     public function get_post_types()
     {
         return $this->post_types;
@@ -47,92 +114,44 @@ class SmartInternalLinks
     {
         global $wpdb;
         $this->table_name = $wpdb->prefix . 'sil_embeddings';
+        $this->micro_table_name = $wpdb->prefix . 'sil_micro_cache';
         $this->api_key = get_option('sil_openai_api_key');
 
-        add_action('admin_menu', [$this, 'add_admin_menu']);
-        add_action('admin_init', [$this, 'register_settings']);
-        add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
+        // Charger les utilitaires légers et les icônes (statiques ou légers)
+        require_once SIL_PLUGIN_DIR . 'includes/class-sil-icons.php';
+        require_once SIL_PLUGIN_DIR . 'includes/class-sil-seo-utils.php';
 
-        // Meta boxes
-        add_action('add_meta_boxes', [$this, 'add_cornerstone_meta_box']);
-        add_action('save_post', [$this, 'save_cornerstone_meta_box']);
+        // Initialiser les hooks Admin & AJAX (Léger, car les classes lourdes sont lazy-loadées)
+        $this->admin_manager; // Déclenche le lazy-load pour enregistrer les menus
+        $this->ajax_handler->init(); // Déclenche le lazy-load pour enregistrer les actions
 
-        // Ajax Handler
-        require_once SIL_PLUGIN_DIR . 'includes/class-sil-ajax-handler.php';
-        $ajax_handler = new SIL_Ajax_Handler($this);
-        $ajax_handler->init();
-
-        require_once SIL_PLUGIN_DIR . 'includes/class-sil-admin-renderer.php';
-        $this->renderer = new SIL_Admin_Renderer($this);
-
-        // --- BMAD 2 : Semantic Cleaner ---
-        require_once SIL_PLUGIN_DIR . 'includes/class-sil-semantic-cleaner.php';
-        $semantic_cleaner = new SIL_Semantic_Cleaner($this);
-
-        // REST API Init
+        // Hooks Core
         add_action('rest_api_init', [$this, 'register_rest_routes']);
-        add_action('wp_ajax_sil_generate_bridge_prompt', [$ajax_handler, 'sil_generate_bridge_prompt']);
-        add_action('wp_ajax_sil_apply_anchor_context', [$ajax_handler, 'sil_apply_anchor_context']);
-        add_action('wp_ajax_sil_generate_seo_meta', [$ajax_handler, 'sil_generate_seo_meta']);
-        add_action('wp_ajax_sil_get_content_gap', [$ajax_handler, 'sil_get_content_gap_data']);
-
-        // --- BMAD 1-E : Alias pour la création de pont sémantique ---
-        add_action('wp_ajax_sil_create_semantic_bridge', [$ajax_handler, 'sil_generate_bridge_prompt']);
-
-        // --- Semantic Silos (Fuzzy C-Means) ---
-        add_action('wp_ajax_sil_rebuild_semantic_silos', [$ajax_handler, 'sil_rebuild_semantic_silos']);
-        add_action('wp_ajax_sil_get_missing_inlinks',    [$ajax_handler, 'sil_get_missing_inlinks']);
-
-        // --- Pilotage Hub AJAX (v2.5.3 Robustness) ---
-        add_action('wp_ajax_sil_get_pilotage_actions',      [$ajax_handler, 'sil_get_pilotage_actions']);
-        add_action('wp_ajax_sil_get_pilotage_diagnostics',  [$ajax_handler, 'sil_get_pilotage_diagnostics']);
-        add_action('wp_ajax_sil_get_action_logs',           [$ajax_handler, 'sil_get_action_logs']);
-        add_action('wp_ajax_sil_log_manual_action',         [$ajax_handler, 'sil_log_manual_action']);
-        add_action('wp_ajax_sil_search_posts',              [$ajax_handler, 'sil_search_posts']);
-
-        // --- Incubateur de Liens (v2.6) ---
-        add_action('wp_ajax_sil_schedule_link',             [$ajax_handler, 'sil_schedule_link']);
-        add_action('wp_ajax_sil_get_scheduled_links',       [$ajax_handler, 'sil_get_scheduled_links']);
-        add_action('wp_ajax_sil_delete_scheduled_link',     [$ajax_handler, 'sil_delete_scheduled_link']);
-        add_action('wp_ajax_sil_complete_scheduled_link',   [$ajax_handler, 'sil_complete_scheduled_link']);
-
-        // AJAX Debug Logs
-
-
         add_action('transition_post_status', [$this, 'on_post_first_publish'], 10, 3);
         add_action('save_post', [$this, 'on_save_post'], 10, 3);
         add_action('save_post', [$this, 'auto_validate_scheduled_links'], 10, 3);
         add_action('admin_notices', [$this, 'display_suggestions_notice']);
 
-
-        // Intégration GSC Data Sync
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-gsc-handler.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-gsc-sync.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-cluster-analysis.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-seo-utils.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-icons.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-database-manager.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-centrality-engine.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-semantic-silos.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-action-logger.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-pilot-engine.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-sil-scanner.php';
-
-        $this->db_manager     = new SIL_Database_Manager();
-        $this->semantic_silos = new SIL_Semantic_Silos();
-        $this->scanner        = new SIL_Scanner($this);
-        $this->pilot_engine   = new SIL_Pilot_Engine($this);
-
+        // Cron logic (Léger)
         add_action('sil_gsc_daily_sync', function () {
             if (get_option('sil_gsc_auto_sync') === '1') {
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-gsc-sync.php';
                 $sync = new \Sil_Gsc_Sync();
                 $sync->sync_data();
             }
         });
 
-        add_action('wp_dashboard_setup', [$this, 'add_dashboard_widgets']);
         add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_scripts']);
+
+        // GSC Native OAuth hooks
+        add_action('wp_ajax_sil_gsc_oauth_redirect', [$this, 'ajax_gsc_oauth_redirect']);
+        add_action('wp_ajax_sil_gsc_oauth_callback', [$this, 'ajax_gsc_oauth_callback']);
+        add_action('wp_ajax_sil_gsc_oauth_disconnect', [$this, 'ajax_gsc_oauth_disconnect']);
+        add_action('wp_ajax_sil_get_all_ids_for_gsc_sync', [$this, 'ajax_get_all_ids_for_gsc_sync']);
+        add_action('wp_ajax_sil_force_gsc_sync_batch', [$this, 'ajax_force_gsc_sync_batch']);
+
         register_activation_hook(__FILE__, [$this, 'activate']);
+
     }
 
     public function activate()
@@ -167,161 +186,8 @@ class SmartInternalLinks
         }
     }
 
-    public function add_admin_menu()
-    {
-
-        add_menu_page(
-            'Smart Internal Links',
-            'Smart Links',
-            'edit_posts',
-            'smart-internal-links',
-            [$this->renderer, 'render_admin_page'],
-            'dashicons-admin-links',
-            30
-        );
-
-        add_submenu_page(
-            'smart-internal-links',
-            'Réglages',
-            'Réglages',
-            'manage_options',
-            'sil-settings',
-            [$this->renderer, 'render_settings_page']
-        );
-        add_submenu_page(
-            'smart-internal-links',
-            'Cartographie Interactive',
-            'Cartographie',
-            'manage_options',
-            'sil-cartographie',
-            [$this->renderer, 'render_cartographie_page']
-        );
-
-
-
-        add_submenu_page(
-            'smart-internal-links',
-            'Réglages GSC',
-            'Réglages GSC',
-            'manage_options',
-            'sil-gsc-settings',
-            [$this->renderer, 'render_gsc_settings_page']
-        );
-        add_submenu_page(
-            'smart-internal-links',
-            'Dashboard de Cohérence',
-            'Dashboard de Cohérence',
-            'manage_options',
-            'sil-opportunites',
-            [$this->renderer, 'render_content_gap_page']
-        );
-
-        global $wpdb;
-        $pending_count = 0;
-        $table_name = $wpdb->prefix . 'sil_scheduled_links';
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name) {
-            $pending_count = (int) $wpdb->get_var("
-                SELECT COUNT(*) FROM {$wpdb->prefix}sil_scheduled_links l
-                JOIN {$wpdb->prefix}posts p ON l.target_id = p.ID
-                WHERE p.post_status = 'publish' AND l.status = 'pending'
-            ");
-        }
-
-        $pilotage_title = 'Pilotage 💎';
-        if ($pending_count > 0) {
-            $pilotage_title .= ' <span class="update-plugins count-' . $pending_count . '"><span class="plugin-count">' . $pending_count . '</span></span>';
-        }
-        
-        add_submenu_page(
-            'smart-internal-links',
-            'Pilotage (Beta)',
-            $pilotage_title,
-            'manage_options',
-            'sil-pilotage',
-            [$this->renderer, 'render_pilotage_page']
-        );
-
-    }
-
-    /**
-     * Ajoute les widgets au tableau de bord WordPress
-     */
-    public function add_dashboard_widgets()
-    {
-        wp_add_dashboard_widget(
-            'sil_orphan_widget',
-            'SIL : Contenus Orphelins',
-            [$this->renderer, 'render_orphan_widget']
-        );
-    }
-
-
-    public function register_settings()
-    {
-        register_setting('sil_settings', 'sil_openai_api_key', ['sanitize_callback' => 'sanitize_text_field']);
-        register_setting('sil_settings', 'sil_openai_model', ['sanitize_callback' => 'sanitize_text_field']);
-        register_setting('sil_settings', 'sil_openai_custom_model', ['sanitize_callback' => 'sanitize_text_field']);
-        register_setting('sil_settings', 'sil_openai_seo_prompt', ['sanitize_callback' => 'sanitize_textarea_field']);
-        register_setting('sil_settings', 'sil_openai_bridge_prompt', ['sanitize_callback' => 'sanitize_textarea_field']);
-        register_setting('sil_settings', 'sil_auto_link', ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_max_links', ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_similarity_threshold', ['sanitize_callback' => 'floatval']);
-        register_setting('sil_settings', 'sil_link_scope', ['sanitize_callback' => 'sanitize_text_field']);
-        register_setting('sil_settings', 'sil_exclude_external', ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_exclude_noindex', ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_infomap_api_url', ['sanitize_callback' => 'esc_url_raw']);
-        register_setting('sil_settings', 'sil_target_permeability', ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_semantic_k',           ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_node_repulsion',       ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_component_spacing',    ['sanitize_callback' => 'absint']);
-        register_setting('sil_settings', 'sil_gravity',              ['sanitize_callback' => 'floatval']);
-
-        // --- NOUVEAU: GSC Settings (OAuth 2.0) - Dedicated Group ---
-        register_setting('sil_gsc_settings', 'sil_gsc_property_url', ['sanitize_callback' => 'esc_url_raw']);
-        register_setting('sil_gsc_settings', 'sil_gsc_client_id', ['sanitize_callback' => 'sanitize_text_field']);
-        register_setting('sil_gsc_settings', 'sil_gsc_client_secret', ['sanitize_callback' => 'sanitize_text_field']);
-        register_setting('sil_gsc_settings', 'sil_gsc_oauth_tokens'); // Store array of tokens directly
-        register_setting('sil_gsc_settings', 'sil_gsc_last_sync');
-        register_setting('sil_gsc_settings', 'sil_gsc_auto_sync', ['sanitize_callback' => 'absint']);
-    }
-
-    // ==============================================
-    // CORNERSTONE META BOX
-    // ==============================================
-
-    public function add_cornerstone_meta_box()
-    {
-        foreach ($this->post_types as $type) {
-            add_meta_box(
-                'sil_cornerstone_box',
-                'Smart Internal Links - SEO',
-                [$this->renderer, 'render_cornerstone_box'],
-                $type,
-                'side',
-                'high'
-            );
-        }
-    }
-
-
-    public function save_cornerstone_meta_box($post_id)
-    {
-        if (!isset($_POST['sil_cornerstone_nonce']) || !wp_verify_nonce($_POST['sil_cornerstone_nonce'], 'sil_cornerstone_save')) {
-            return;
-        }
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE)
-            return;
-
-        $post_id = intval($post_id);
-        if (!current_user_can('edit_post', $post_id))
-            return;
-
-        if (isset($_POST['sil_is_cornerstone'])) {
-            update_post_meta($post_id, '_sil_is_cornerstone', '1');
-        } else {
-            delete_post_meta($post_id, '_sil_is_cornerstone');
-        }
-    }
+    // Methods migrated to SIL_Admin_Manager: 
+    // add_admin_menu, register_settings, add_cornerstone_meta_box, save_cornerstone_meta_box
 
     /**
      * Charge les scripts sur le front-end
@@ -340,89 +206,7 @@ class SmartInternalLinks
     // SCRIPTS & STYLES
     // ==============================================
 
-    public function enqueue_admin_scripts($hook)
-    {
-        // 1. Détection stricte de nos pages (slug toplevel ou sous-menus)
-        // Les hooks ressemblent à "toplevel_page_smart-internal-links" ou "smart-links_page_sil-settings"
-        $is_plugin_page = (strpos($hook, 'smart-internal-links') !== false || strpos($hook, 'sil-') !== false);
-
-        if (!$is_plugin_page) {
-            return;
-        }
-
-        // 1. Google Fonts: Fira Sans (UI) & Fira Code (Data)
-        wp_enqueue_style('sil-google-fonts', 'https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&family=Fira+Sans:wght@400;600;700&display=swap', [], null);
-
-        // 2. CSS Global Admin
-        wp_enqueue_style('sil-admin', plugin_dir_url(__FILE__) . 'assets/admin.css', [], SIL_VERSION);
-
-        // 3. Shared Bridge Manager
-        wp_enqueue_script('sil-bridge-manager', plugin_dir_url(__FILE__) . 'assets/sil-bridge-manager.js', ['jquery'], SIL_VERSION, true);
-
-        // 4. Chargement spécifique selon la page
-
-        // --- PAGES DE GRAPHE (Cytoscape + Graph.js) ---
-        if (strpos($hook, 'sil-visualisation') !== false || strpos($hook, 'sil-visualization') !== false || strpos($hook, 'sil-cartographie') !== false) {
-            wp_enqueue_script('cytoscape', 'https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js', [], '3.26.0', true);
-
-            $graph_ver = file_exists(plugin_dir_path(__FILE__) . 'assets/sil-graph-v3.js') ? filemtime(plugin_dir_path(__FILE__) . 'assets/sil-graph-v3.js') : SIL_VERSION;
-            $css_ver = file_exists(plugin_dir_path(__FILE__) . 'assets/sil-graph-v2.css') ? filemtime(plugin_dir_path(__FILE__) . 'assets/sil-graph-v2.css') : SIL_VERSION;
-            wp_enqueue_script('sil-graph-js', plugin_dir_url(__FILE__) . 'assets/sil-graph-v3.js', ['jquery', 'cytoscape', 'sil-bridge-manager'], $graph_ver, true);
-            wp_enqueue_style('sil-graph-css', plugin_dir_url(__FILE__) . 'assets/sil-graph-v2.css', [], $css_ver);
-        }
-
-        // --- PAGE PRINCIPALE & REGLAGES & CONTENT GAP (Admin.js) ---
-        if ($hook === 'index.php' || $hook === 'toplevel_page_smart-internal-links' || strpos($hook, 'sil-settings') !== false || strpos($hook, 'sil-gsc-settings') !== false || strpos($hook, 'sil-content-gap') !== false || strpos($hook, 'sil-opportunites') !== false) {
-            wp_enqueue_script('sil-admin-js', plugin_dir_url(__FILE__) . 'assets/admin.js', ['jquery', 'sil-bridge-manager'], '2.3.0', true);
-        }
-
-        // --- PAGE PILOTAGE (Pilot Center) ---
-        if (strpos($hook, 'sil-pilotage') !== false) {
-            wp_enqueue_style('sil-pilot-center', plugin_dir_url(__FILE__) . 'assets/sil-pilot-center.css', [], SIL_VERSION);
-            wp_enqueue_script('sil-pilot-center-js', plugin_dir_url(__FILE__) . 'assets/sil-pilot-center.js', ['jquery', 'sil-bridge-manager'], SIL_VERSION, true);
-        }
-
-        // --- UNIFIED DATA (Rescue Plan) ---
-        $shared_data = [
-            'ajaxurl'             => admin_url( 'admin-ajax.php' ),
-            'nonce'               => wp_create_nonce( 'sil_nonce' ),
-            'admin_nonce'         => wp_create_nonce( 'sil_admin_nonce' ),
-            'siteUrl'             => get_site_url(),
-            'restUrl'             => esc_url_raw(rest_url('sil/v1/graph-data')),
-            'rest_nonce'          => wp_create_nonce('wp_rest'),
-            'home_url'            => home_url('/'),
-            'admin_url'           => admin_url('admin.php'),
-            'post_edit_base'      => admin_url('post.php'),
-            'maxClicks'           => 100,
-            'target_permeability' => get_option('sil_target_permeability', 20),
-            'repulsion'           => get_option('sil_node_repulsion', 300000),
-            'spacing'             => get_option('sil_component_spacing', 60),
-            'gravity'             => get_option('sil_gravity', 2.0),
-            'icons'               => [
-                'check'     => SIL_Icons::get_icon('check', ['size' => 14]),
-                'x'         => SIL_Icons::get_icon('x', ['size' => 14]),
-                'rocket'    => SIL_Icons::get_icon('rocket', ['size' => 14]),
-                'link'      => SIL_Icons::get_icon('link', ['size' => 14, 'class' => 'sil-inline-icon']),
-                'star'      => SIL_Icons::get_icon('star', ['size' => 12, 'color' => '#f59e0b']),
-                'ghost'     => SIL_Icons::get_icon('ghost', ['size' => 14]),
-                'flag'      => SIL_Icons::get_icon('flag', ['size' => 14]),
-                'droplets'  => SIL_Icons::get_icon('droplets', ['size' => 14]),
-                'target'    => SIL_Icons::get_icon('target', ['size' => 14]),
-                'lightbulb' => SIL_Icons::get_icon('lightbulb', ['size' => 14]),
-                'bridge'    => SIL_Icons::get_icon('bridge', ['size' => 14]),
-                'anchor'    => SIL_Icons::get_icon('anchor', ['size' => 14]),
-                'bot'       => SIL_Icons::get_icon('bot', ['size' => 14]),
-                'wand'      => SIL_Icons::get_icon('wand', ['size' => 14]),
-                'sparkles'  => SIL_Icons::get_icon('sparkles', ['size' => 14]),
-                'trending_down' => SIL_Icons::get_icon('trending-down', ['size' => 14]),
-            ]
-        ];
-
-        wp_localize_script( 'sil-admin-js', 'silSharedData', $shared_data );
-        wp_localize_script( 'sil-graph-js', 'silSharedData', $shared_data );
-        wp_localize_script( 'sil-pilot-center-js', 'silSharedData', $shared_data );
-        wp_localize_script( 'sil-bridge-manager', 'silSharedData', $shared_data );
-    }
+    // Method migrated to SIL_Admin_Manager: enqueue_admin_scripts
 
     // ==============================================
     // HELPER: NOINDEX DETECTION
@@ -530,6 +314,8 @@ class SmartInternalLinks
      */
     public function clear_graph_cache()
     {
+        delete_transient('sil_graph_cache_v13_0');
+        delete_transient('sil_graph_cache_v12_0');
         delete_transient('sil_graph_cache');
     }
 
@@ -567,89 +353,12 @@ class SmartInternalLinks
 
     public function generate_embedding($post_id)
     {
-        global $wpdb;
-
-        // Vérification Exclusion Noindex
-        if (get_option('sil_exclude_noindex') === '1' && $this->is_noindexed($post_id)) {
-            return false;
-        }
-
-        $post = get_post($post_id);
-        if (!$post || $post->post_status !== 'publish')
-            return false;
-
-        $content = wp_strip_all_tags($post->post_title . ' ' . $post->post_content);
-        $content = preg_replace('/\s+/', ' ', $content);
-        $content = mb_substr($content, 0, 8000);
-        $content_hash = md5($content);
-
-        $existing = $wpdb->get_var($wpdb->prepare(
-            "SELECT content_hash FROM {$this->table_name} WHERE post_id = %d",
-            $post_id
-        ));
-
-        if ($existing === $content_hash) {
-            // error_log("SIL: Skipping post $post_id, already up to date.");
-            return true;
-        }
-
-        $response = wp_remote_post('https://api.openai.com/v1/embeddings', [
-            'timeout' => 30,
-            'headers' => [
-                'Authorization' => 'Bearer ' . $this->api_key,
-                'Content-Type' => 'application/json',
-            ],
-            'body' => json_encode([
-                'model' => 'text-embedding-3-small',
-                'input' => $content
-            ])
-        ]);
-
-        if (is_wp_error($response)) {
-            error_log("SIL ERROR: OpenAI API connection error for post $post_id: " . $response->get_error_message());
-            return false;
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        if (isset($body['error'])) {
-            error_log("SIL ERROR: OpenAI API responded with error for post $post_id: " . print_r($body['error'], true));
-            return false;
-        }
-
-        if (!isset($body['data'][0]['embedding'])) {
-            error_log("SIL ERROR: Malformed OpenAI API response for post $post_id: " . wp_remote_retrieve_body($response));
-            return false;
-        }
-
-        $embedding = $body['data'][0]['embedding'];
-
-        $wpdb->replace($this->table_name, [
-            'post_id' => $post_id,
-            'embedding' => json_encode($embedding),
-            'content_hash' => $content_hash
-        ], ['%d', '%s', '%s']);
-
-        error_log("SIL SUCCESS: Generated and saved embedding for post $post_id");
-
-        return true;
+        return $this->embeddings->generate_post_embedding($post_id);
     }
 
-    private function cosine_similarity($vec1, $vec2)
+    public function cosine_similarity($vec1, $vec2)
     {
-        $dot = 0;
-        $norm1 = 0;
-        $norm2 = 0;
-        $len = min(count($vec1), count($vec2));
-
-        for ($i = 0; $i < $len; $i++) {
-            $dot += $vec1[$i] * $vec2[$i];
-            $norm1 += $vec1[$i] * $vec1[$i];
-            $norm2 += $vec2[$i] * $vec2[$i];
-        }
-
-        if ($norm1 == 0 || $norm2 == 0)
-            return 0;
-        return $dot / (sqrt($norm1) * sqrt($norm2));
+        return $this->embeddings->calculate_similarity($vec1, $vec2);
     }
 
     public function count_internal_links($post_id)
@@ -1056,27 +765,48 @@ Réponds UNIQUEMENT en JSON: {\"index\": X, \"anchor\": \"...\"}";
      */
     public function get_available_paragraphs($content)
     {
-        // WordPress often stores text with double-newlines instead of <p> tags
         if (strpos($content, '<p>') === false) {
             $content = wpautop($content);
         }
 
-        $result = preg_match_all('/(?:<p[^>]*>(.*?)<\/p>|<div[^>]*class="[^"]*thrv_text_element[^"]*"[^>]*>(.*?)<\/div>)/is', $content, $matches, PREG_OFFSET_CAPTURE);
-        if ($result === false) {
-            return []; // Regex failed (likely backtracking limit)
+        $paragraphs = [];
+        
+        // Fallback sécurisé : Utilisation de DOMDocument pour éviter les limites de regex
+        $dom = new DOMDocument();
+        libxml_use_internal_errors(true);
+        // Encodage forcé pour éviter les soucis UTF-8
+        $dom->loadHTML('<?xml encoding="UTF-8">' . $content, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        libxml_clear_errors();
+
+        // On cherche les paragraphes, les blocs texte Thrive et les blocs Spectra
+        $xpath = new DOMXPath($dom);
+        $nodes = $xpath->query('//p | //div[contains(@class, "thrv_text_element")] | //div[contains(@class, "uagb-")]');
+        
+        $idx = 0;
+        foreach ($nodes as $node) {
+            // Obtenir le HTML interne du nœud
+            $html = $dom->saveHTML($node);
+            
+            // Decode entities so OpenAI/Analysis sees plain exact text
+            $text = html_entity_decode(wp_strip_all_tags($html), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            $text = preg_replace('/\s+/', ' ', str_replace("\xc2\xa0", ' ', $text));
+            $text = trim($text);
+
+            $link_count = substr_count(strtolower($html), '<a ');
+            
+            if (strlen($text) > 80 && $link_count < 2) {
+                // Pour maintenir la compatibilité avec insert_link_in_paragraph qui attend un offset de regex,
+                // nous ne fournissons plus d'offset mais nous basons sur le remplacement de contenu HTML exact.
+                $paragraphs[] = [
+                    'index'      => $idx,
+                    'content'    => $html,
+                    'text'       => $text,
+                    'link_count' => $link_count
+                ];
+            }
+            $idx++;
         }
 
-        $paragraphs = [];
-        if (!empty($matches[0])) {
-            foreach ($matches[0] as $idx => $match) {
-                // Decode entities so OpenAI sees plain exact text (e.g. '&' instead of '&amp;')
-                $text = html_entity_decode(wp_strip_all_tags($match[0]), ENT_QUOTES | ENT_XML1, 'UTF-8');
-                $link_count = substr_count(strtolower($match[0]), '<a ');
-                if (strlen($text) > 80 && $link_count < 2) {
-                    $paragraphs[] = ['index' => $idx, 'content' => $match[0], 'offset' => $match[1], 'text' => trim($text), 'link_count' => $link_count];
-                }
-            }
-        }
         return $paragraphs;
     }
 
@@ -1123,7 +853,8 @@ RÈGLES STRICTES :
 4. Conserve strictement les liens existants listés ci-après.
 {$existing_info}
 5. Si l'insertion est impossible sans dénaturer le texte, réponds juste : IMPOSSIBLE
-6. Ajoute systématiquement la classe sil-link et l'attribut data-sil-id=\"{$link_id}\" à la balise <a>.";
+6. Ajoute systématiquement la classe sil-link et l'attribut data-sil-id=\"{$link_id}\" à la balise <a>.
+7. Respecte la balise HTML de conteneur originale du paragraphe (ex: <p>...</p> ou <div>...</div>).";
 
         $response = wp_remote_post('https://api.openai.com/v1/chat/completions', [
             'timeout' => 45,
@@ -1148,9 +879,14 @@ RÈGLES STRICTES :
                 }, $new_text);
 
                 if ($new_text !== 'IMPOSSIBLE' && strpos($new_text, $target_url) !== false) {
-                    // S'assurer qu'il y a des balises p
-                    if (strpos($new_text, '<p>') === false) {
-                        $new_text = '<p>' . $new_text . '</p>';
+                    // S'assurer qu'il y a une balise de conteneur (p ou div)
+                    if (strpos($new_text, '<p>') === false && strpos($new_text, '<div') === false) {
+                        // Si l'original était un div, on remet un div, sinon p
+                        if (strpos($paragraph, '<div') === 0) {
+                            $new_text = '<div>' . $new_text . '</div>';
+                        } else {
+                            $new_text = '<p>' . $new_text . '</p>';
+                        }
                     }
                     return $new_text;
                 }
@@ -1216,6 +952,24 @@ RÈGLES STRICTES :
             $candidate_post = get_post($item['post_id']);
             if (!$candidate_post)
                 continue;
+
+            // --- NOUVEAU: Check Anti-Cannibalisation (Duel de Pages) ---
+            $max_sim = floatval(get_option('sil_similarity_max', 0.92));
+            $source_emb = get_post_meta($item['post_id'], '_sil_embedding', true);
+            $target_emb = get_post_meta($post_id, '_sil_embedding', true);
+
+            if (!empty($source_emb) && !empty($target_emb)) {
+                $source_v = is_array($source_emb) ? $source_emb : json_decode($source_emb, true);
+                $target_v = is_array($target_emb) ? $target_emb : json_decode($target_emb, true);
+                
+                if ($source_v && $target_v) {
+                    $real_similarity = $this->cosine_similarity($source_v, $target_v);
+                    if ($real_similarity >= $max_sim) {
+                        error_log("SIL: Blocage Cannibalisation Sémantique détecté entre " . $item['post_id'] . " et " . $post_id . " (Score: $real_similarity)");
+                        continue;
+                    }
+                }
+            }
 
             $candidate_content = $candidate_post->post_content;
             $target_url = get_permalink($post_id); // The URL of the post we want links TO
@@ -1501,14 +1255,15 @@ RÈGLES STRICTES :
      */
     public function get_rendered_graph_data($force = false)
     {
-        $cluster_analysis = new \Sil_Cluster_Analysis();
-        $enriched_data = $cluster_analysis->get_graph_data($force);
+        $enriched_data = $this->cluster_analysis->get_graph_data($force);
 
         return [
-            'cached' => isset($enriched_data['metadata']['generated_at']) && abs(strtotime($enriched_data['metadata']['generated_at']) - time()) < 10, 
-            'nodes' => $enriched_data['nodes'],
-            'edges' => $enriched_data['edges'],
-            'metadata' => $enriched_data['metadata'] ?? []
+            'cached'           => isset($enriched_data['metadata']['generated_at']) && abs(strtotime($enriched_data['metadata']['generated_at']) - time()) < 10, 
+            'nodes'            => $enriched_data['nodes'] ?? [],
+            'edges'            => $enriched_data['edges'] ?? [],
+            'opportunities'    => $enriched_data['opportunities'] ?? [],
+            'stats_summary'    => $enriched_data['stats_summary'] ?? [],
+            'metadata'         => $enriched_data['metadata'] ?? []
         ];
     }
 
@@ -1546,7 +1301,7 @@ RÈGLES STRICTES :
 
         wp_send_json_success($saved_checklist);
     }
-    private function get_openai_model()
+    public function get_openai_model()
     {
         $model = get_option('sil_openai_model', 'gpt-4o');
         if ($model === 'custom') {
@@ -1588,8 +1343,8 @@ RÈGLES STRICTES :
 
     public function ajax_force_gsc_sync()
     {
-        check_ajax_referer('sil_nonce', 'nonce'); // [Security-Fix]
-        set_time_limit(0); // Empêche le timeout serveur lors du scan complet
+        check_ajax_referer('sil_nonce', 'nonce'); 
+        set_time_limit(0); 
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Accès refusé.');
         }
@@ -1602,14 +1357,45 @@ RÈGLES STRICTES :
             $sync = new Sil_Gsc_Sync();
             $result = $sync->sync_data();
 
-
-            if ($result === true) {
-                wp_send_json_success('Synchronisation terminée avec succès.');
+            if (isset($result['success']) && $result['success']) {
+                wp_send_json_success($result);
             } else {
-                wp_send_json_error('La synchronisation a échoué (vérifiez les logs ou le statut de connexion OAuth).');
+                wp_send_json_error($result['message'] ?? 'La synchronisation a échoué.');
             }
-        } catch (\Exception $e) {
-            wp_send_json_error('Erreur critique de synchronisation : ' . $e->getMessage());
+        } catch (Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
+    }
+
+    public function ajax_force_gsc_sync_batch()
+    {
+        check_ajax_referer('sil_nonce', 'nonce');
+        set_time_limit(60); 
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Accès refusé.');
+        }
+
+        $post_ids = isset($_POST['post_ids']) ? (array) $_POST['post_ids'] : [];
+        if (empty($post_ids)) {
+            wp_send_json_error('Aucun ID de post fourni.');
+        }
+
+        try {
+            if (!class_exists('Sil_Gsc_Sync')) {
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-gsc-sync.php';
+            }
+
+            $sync = new Sil_Gsc_Sync();
+            $result = $sync->sync_data($post_ids);
+
+            if (isset($result['success']) && $result['success']) {
+                wp_send_json_success($result);
+            } else {
+                wp_send_json_error($result['message'] ?? 'Erreur lors du traitement du lot.');
+            }
+        } catch (Exception $e) {
+            wp_send_json_error($e->getMessage());
         }
     }
 
@@ -1632,6 +1418,9 @@ RÈGLES STRICTES :
 
         try {
             error_log('SIL GSC: Starting native OAuth Redirect...');
+            if (!class_exists('Sil_Gsc_Handler')) {
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-gsc-handler.php';
+            }
             $handler = new \Sil_Gsc_Handler();
             $auth_url = $handler->get_auth_url();
 
@@ -1656,11 +1445,14 @@ RÈGLES STRICTES :
 
         try {
             error_log('SIL GSC: Starting native OAuth Callback processing...');
+            if (!class_exists('Sil_Gsc_Handler')) {
+                require_once SIL_PLUGIN_DIR . 'includes/class-sil-gsc-handler.php';
+            }
             $handler = new \Sil_Gsc_Handler();
             $token = $handler->fetch_access_token_with_auth_code($_GET['code']);
 
             // Store tokens (this includes Bearer access_token & refresh_token)
-            update_option('sil_gsc_oauth_tokens', $token);
+            update_option('sil_gsc_oauth_tokens', $token, false);
             error_log('SIL GSC: Native Tokens successfully acquired and saved.');
 
             // Redirect back to settings page with success message
@@ -1681,8 +1473,8 @@ RÈGLES STRICTES :
         }
 
         delete_option('sil_gsc_oauth_tokens');
-
-        wp_redirect(admin_url('admin.php?page=smart-internal-links-settings&gsc_auth=disconnected'));
+        
+        wp_redirect(admin_url('admin.php?page=sil-gsc-settings&gsc_auth=disconnected'));
         exit;
     }
 
@@ -1720,10 +1512,10 @@ RÈGLES STRICTES :
         }
     }
 }
-require_once plugin_dir_path(__FILE__) . 'includes/class-sil-cluster-analysis.php';
 
 // Init
-SmartInternalLinks::get_instance();
+$GLOBALS['smart_internal_links'] = SmartInternalLinks::get_instance();
+
 
 
 

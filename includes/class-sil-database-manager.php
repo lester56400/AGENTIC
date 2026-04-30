@@ -133,6 +133,38 @@ class SIL_Database_Manager
         dbDelta($sql_membership);
         dbDelta($sql_action_log);
         dbDelta($sql_scheduled_links);
+
+        // 7. [NEW V10] Table de Cache des Micro-Embeddings (Paragraphes)
+        $table_micro_cache = $this->wpdb->prefix . 'sil_micro_cache';
+        $sql_micro_cache = "CREATE TABLE $table_micro_cache (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            post_id bigint(20) NOT NULL,
+            paragraph_hash varchar(32) NOT NULL,
+            vector longtext NOT NULL,
+            content text,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY post_id (post_id),
+            KEY paragraph_hash (paragraph_hash)
+        ) $charset_collate;";
+
+        // 8. [NEW V20.1] Table des Centroïdes (Warm Start)
+        $table_centroids = $this->wpdb->prefix . 'sil_centroids';
+        $sql_centroids = "CREATE TABLE $table_centroids (
+            silo_id int(11) NOT NULL,
+            vector longtext NOT NULL,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (silo_id)
+        ) $charset_collate;";
+
+        dbDelta($sql_embeddings);
+        dbDelta($sql_gsc);
+        dbDelta($sql_links);
+        dbDelta($sql_membership);
+        dbDelta($sql_action_log);
+        dbDelta($sql_scheduled_links);
+        dbDelta($sql_micro_cache);
+        dbDelta($sql_centroids);
     }
 
     /**

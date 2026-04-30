@@ -8,7 +8,7 @@
 
 Antigravity Kit is a modular system consisting of:
 
-- **20 Specialist Agents** - Role-based AI personas
+- **21 Specialist Agents** - Role-based AI personas
 - **36 Skills** - Domain-specific knowledge modules
 - **11 Workflows** - Slash command procedures
 
@@ -48,6 +48,7 @@ Specialist AI personas for different domains.
 | `debugger`               | Root cause analysis        | systematic-debugging                                     |
 | `performance-optimizer`  | Speed, Web Vitals          | performance-profiling                                    |
 | `seo-specialist`         | Ranking, visibility        | seo-fundamentals, geo-fundamentals                       |
+| `ui-ux-designer`         | Radical UI/UX design       | ui-ux-pro-max, frontend-design, scroll-experience         |
 | `documentation-writer`   | Manuals, docs              | documentation-templates                                  |
 | `product-manager`        | Requirements, user stories | plan-writing, brainstorming                              |
 | `product-owner`          | Strategy, backlog, MVP     | plan-writing, brainstorming                              |
@@ -266,7 +267,7 @@ For details, see [scripts/README.md](scripts/README.md)
 
 | Metric              | Value                         |
 | ------------------- | ----------------------------- |
-| **Total Agents**    | 20                            |
+| **Total Agents**    | 21                            |
 | **Total Skills**    | 36                            |
 | **Total Workflows** | 11                            |
 | **Total Scripts**   | 2 (master) + 18 (skill-level) |
